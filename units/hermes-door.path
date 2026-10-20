@@ -1,0 +1,13 @@
+# hermes-door.path: start the door whenever an arrival is waiting. One DirectoryNotEmpty= line per stage in
+# ~/.config/hermes/routes.json (these two are the example's stages; scripts/install.sh, a later issue, fills in yours).
+# Install:  cp units/hermes-door.* ~/.config/systemd/user/ && systemctl --user enable --now hermes-door.path
+[Unit]
+Description=Hermes door: a delivery is waiting
+
+[Path]
+DirectoryNotEmpty=%h/.local/share/hermes/stage/in
+DirectoryNotEmpty=/srv/media/.hermes/in
+Unit=hermes-door.service
+
+[Install]
+WantedBy=default.target
