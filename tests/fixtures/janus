@@ -3,8 +3,8 @@
 writes into the arrival:
     janus check --json <arrival dir>      reads meta.json and data; prints one JSON verdict on stdout
     exit 0 = pass · 10 = quarantine · 11 = duplicate · anything else = Janus failed (Hermes holds the arrival)
-The verdict comes from HERMES_FAKE_JANUS when it is set (pass | quarantine | duplicate | fail | hang; "hang" never
-returns, for timeout tests). Otherwise the file decides: a size or sha256 that doesn't match meta.json is a quarantine
+The verdict comes from HERMES_FAKE_JANUS when it is set (pass | quarantine | duplicate | fail | hang | garbage; "hang"
+never returns, for timeout tests; "garbage" exits 0 with text that is not a verdict). Otherwise the file decides: a size or sha256 that doesn't match meta.json is a quarantine
 (integrity), an executable or script name is a quarantine (kind), a name containing "duplicate" is a duplicate, and
 anything else passes."""
 import hashlib
@@ -42,6 +42,9 @@ def check(arrival):
     forced = os.environ.get("HERMES_FAKE_JANUS")
     if forced == "hang":
         time.sleep(3600)
+    if forced == "garbage":
+        print("not a verdict")
+        sys.exit(0)
     if forced in EXIT:
         verdict = forced
         if verdict != "pass":

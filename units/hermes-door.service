@@ -1,0 +1,9 @@
+# hermes-door.service: one run of the door (hermes door), started by hermes-door.path. A one-shot: it exits when every
+# arrival has left in/. Argus's argus-limits.conf drop-in adds the CPU, memory and I/O limits every agent task gets.
+[Unit]
+Description=Hermes door: check every waiting arrival with Janus and deliver it
+
+[Service]
+Type=oneshot
+ExecStart=%h/.local/bin/hermes door
+Nice=10

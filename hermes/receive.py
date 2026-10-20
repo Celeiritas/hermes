@@ -68,6 +68,13 @@ def clean_name(b64):
         name = base64.urlsafe_b64decode(b64 + "=" * (-len(b64) % 4)).decode("utf-8")
     except (ValueError, UnicodeDecodeError):
         raise Refused("the name is not base64url-encoded UTF-8")
+    return check_name(name)
+
+
+def check_name(name):
+    """The same rules on an already decoded name (the door re-checks every arrival's name: it is the boundary)."""
+    if not isinstance(name, str):
+        raise Refused("the name is not text")
     name = unicodedata.normalize("NFC", name)    # one name, one spelling
     if not name.strip():
         raise Refused("the name is empty")
