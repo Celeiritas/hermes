@@ -38,7 +38,7 @@ Run these from the sending device after setup. Each one must be refused.
 
 | Try | Expect |
 |---|---|
-| `ssh -i ~/.ssh/hermes_{{PC}} {{SERVER}}` (a shell) | no prompt; `hermes: no command. hermes receive runs only as an ssh forced command …`, exit 2 |
+| `ssh -o IdentitiesOnly=yes -i ~/.ssh/hermes_{{PC}} {{SERVER}}` (a shell; without `IdentitiesOnly` ssh would offer your normal key first and open a real shell) | no prompt; `hermes: no command. hermes receive runs only as an ssh forced command …`, exit 2 |
 | `ssh hermes-{{SERVER}} bash` or `ssh hermes-{{SERVER}} 'cat ~/.ssh/authorized_keys'` | `hermes: unknown command …`, exit 2 |
 | `ssh -L 8080:localhost:80 hermes-{{SERVER}} ping` (local forward) | ping still answers, but the forward fails: `channel …: open failed: administratively prohibited` |
 | `ssh -R 8080:localhost:80 hermes-{{SERVER}} ping` (remote forward) | `Warning: remote port forwarding failed` |
@@ -51,4 +51,4 @@ If any of these gets through, the line in `authorized_keys` is not the one `herm
 ## What `hermes receive` does with a `put`
 `put <route> <name-b64url> <bytes> <sha256>` with the file on stdin (every argument is a route id, base64url, digits or hex, so no shell on either side can mangle it). The file streams into `<stage>/incoming/<id>/data` and is hashed on the way; it stops when more bytes arrive than were declared or when the drive would drop below a 5 GB margin. Size and SHA-256 are checked against what the sender declared. Then `meta.json` is written (route, name, bytes, sha256, the key's device, and `node`/`user` from `tailscale whois`, which may be `null` when whois fails; Janus decides what that means), and the whole `<id>/` folder is renamed into `<stage>/in/` in one step, so the door never sees half a file. A short stream, a long one or a wrong hash sets the attempt aside in `<stage>/failed/<id>/` with `error.txt`; nothing is deleted. Exit 0 ok, 1 transfer failed, 2 refused, 3 the server's own problem (routes.json, disk). The reply on success is `ok <id>`.
 
-Names are cleaned: no `/`, `\` or control characters, no leading dot, at most 200 characters. Files are written with mode 600, never with an exec bit. `receive` runs at nice 10.
+Names are NFC-normalized and cleaned: no `/` or `\`, no control, invisible or direction-changing characters, no leading dot, no trailing space or dot, at most 200 characters. A transfer that sends nothing for 120 s is given up and set aside. An unexpected error on the server shows the sender one line, not a traceback; the traceback goes to `~/.local/share/hermes/log/receive-errors.log`. Files are written with mode 600, never with an exec bit. `receive` runs at nice 10.
