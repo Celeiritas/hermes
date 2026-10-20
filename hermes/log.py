@@ -13,8 +13,10 @@ from hermes import config, version
 LOG_DIR = "~/.local/share/hermes/log"
 STATE = "~/.local/state/hermes/seen.json"
 ALERT = "~/.local/state/argus-ui/alerts/hermes.json"
-LISTED = ("quarantine", "held", "failed", "skipped")   # the set-aside folders the Delivery page shows
-ALERTING = ("quarantine", "held")
+LISTED = ("quarantine", "held", "undelivered", "outbox", "failed", "skipped")   # what the Delivery page shows
+ALERTING = ("quarantine", "held", "undelivered")
+WORDS = {"quarantine": "quarantined", "held": "held", "undelivered": "undelivered", "outbox": "waiting to be sent",
+         "failed": "failed transfers"}
 STAMP = re.compile(r"^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d(\.\d+)?([+-]\d\d:\d\d|Z)? ")
 
 
@@ -110,7 +112,7 @@ def items(cfg, folder):
             meta = read_json(p / "meta.json") or {}
             verdict = read_json(p / "verdict.json") or {}
             reasons = list(verdict.get("reasons") or [])
-            note = {"held": "held.txt", "failed": "error.txt"}.get(folder)
+            note = {"held": "held.txt", "failed": "error.txt", "outbox": "tries.txt", "undelivered": "tries.txt"}.get(folder)
             if note and (p / note).is_file():         # the last note, without its time stamp
                 lines = [STAMP.sub("", l) for l in (p / note).read_text(encoding="utf-8").splitlines() if l.strip()]
                 reasons += lines[-1:]
@@ -137,9 +139,9 @@ def status(cfg):
 def summary(st):
     """The status line the Delivery page and Elaia's Home page show."""
     parts = ["%d %s today" % (n, word) for word, n in sorted(st["today"].items())] or ["nothing today"]
-    for folder in ALERTING + ("failed",):
+    for folder in ALERTING + ("outbox", "failed"):
         if st[folder]:
-            parts.append("%d %s" % (len(st[folder]), {"quarantine": "quarantined", "held": "held", "failed": "failed transfers"}[folder]))
+            parts.append("%d %s" % (len(st[folder]), WORDS[folder]))
     return " · ".join(parts)
 
 
@@ -169,13 +171,12 @@ def update_alert(cfg):
         except FileNotFoundError:
             pass
         return None
-    q = [i for i in unseen if i["folder"] == "quarantine"]
-    h = [i for i in unseen if i["folder"] == "held"]
     parts = []
-    if q:
-        parts.append("%d deliver%s quarantined: %s" % (len(q), "y" if len(q) == 1 else "ies", q[0]["reasons"][0] if q[0]["reasons"] else "see the Delivery page"))
-    if h:
-        parts.append("%d deliver%s held: %s" % (len(h), "y" if len(h) == 1 else "ies", h[0]["reasons"][0] if h[0]["reasons"] else "Janus did not answer"))
+    for folder, fallback in (("quarantine", "see the Delivery page"), ("held", "Janus did not answer"), ("undelivered", "the device stayed asleep")):
+        these = [i for i in unseen if i["folder"] == folder]
+        if these:
+            parts.append("%d deliver%s %s: %s" % (len(these), "y" if len(these) == 1 else "ies", WORDS[folder],
+                                                  these[0]["reasons"][-1] if these[0]["reasons"] else fallback))
     alert = {"job": "hermes-door", "level": "alert", "since": min(i["since"] for i in unseen), "message": "; ".join(parts), "link": "delivery"}
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(alert) + "\n", encoding="utf-8")

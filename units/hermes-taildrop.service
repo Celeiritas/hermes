@@ -1,0 +1,9 @@
+# hermes-taildrop.service: one run of hermes collect (retry the outbox, pick up the phones' Taildrops), started by
+# hermes-taildrop.timer every 2 minutes and by "Collect now" on the Delivery page. Under 0.5 s when nothing waits.
+[Unit]
+Description=Hermes: collect Taildrops and retry the outbox
+
+[Service]
+Type=oneshot
+ExecStart=%h/.local/bin/hermes collect
+Nice=10

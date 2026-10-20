@@ -1,0 +1,13 @@
+# hermes-taildrop.timer: every 2 minutes (Tailscale has no "file received" hook). Install:
+#   cp units/hermes-taildrop.* ~/.config/systemd/user/ && systemctl --user enable --now hermes-taildrop.timer
+[Unit]
+Description=Hermes: collect Taildrops and retry the outbox, every 2 minutes
+
+[Timer]
+OnBootSec=1min
+OnUnitActiveSec=2min
+AccuracySec=20s
+Unit=hermes-taildrop.service
+
+[Install]
+WantedBy=timers.target

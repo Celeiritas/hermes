@@ -1,19 +1,54 @@
 #!/usr/bin/env python3
-"""A fake tailscale for tests: `tailscale whois --json <ip>` answers like the real one. HERMES_FAKE_WHOIS=fail makes it
-exit 1 with an error, =garbage makes it print something that isn't JSON."""
+"""A fake tailscale for tests.
+    tailscale whois --json <ip>      answers like the real one; HERMES_FAKE_WHOIS=fail exits 1, =garbage prints non-JSON
+    tailscale file cp <file> <dev>:  HERMES_FAKE_TAILDROP=ok (default) copies the file into $HERMES_FAKE_DEVICE and
+                                     appends "cp <file> <dev>" to $HERMES_FAKE_DEVICE/sent.log; =offline exits 1 like a
+                                     sleeping peer; =hang never returns
+    tailscale file get [--conflict=X] <dir>   moves every file waiting in $HERMES_FAKE_TAILDROPS into <dir>, at once
+    tailscale version                prints a version"""
 import json
 import os
+import shutil
 import sys
+import time
 
-if sys.argv[1:3] != ["whois", "--json"] or len(sys.argv) != 4:
-    print("usage: tailscale whois --json <ip>", file=sys.stderr)
-    sys.exit(2)
-mode = os.environ.get("HERMES_FAKE_WHOIS", "ok")
-if mode == "fail":
-    print("no match for IP " + sys.argv[3], file=sys.stderr)
-    sys.exit(1)
-if mode == "garbage":
-    print("not json")
+cmd = sys.argv[1:]
+if cmd[:2] == ["whois", "--json"] and len(cmd) == 3:
+    mode = os.environ.get("HERMES_FAKE_WHOIS", "ok")
+    if mode == "fail":
+        print("no match for IP " + cmd[2], file=sys.stderr)
+        sys.exit(1)
+    if mode == "garbage":
+        print("not json")
+        sys.exit(0)
+    print(json.dumps({"Node": {"ID": 1, "Name": "desktop.example.ts.net.", "ComputedName": "desktop", "Addresses": [cmd[2]]},
+                      "UserProfile": {"ID": 2, "LoginName": "you@example.com", "DisplayName": "You"}, "CapMap": None}))
     sys.exit(0)
-print(json.dumps({"Node": {"ID": 1, "Name": "desktop.example.ts.net.", "ComputedName": "desktop", "Addresses": [sys.argv[3]]},
-                  "UserProfile": {"ID": 2, "LoginName": "you@example.com", "DisplayName": "You"}, "CapMap": None}))
+if cmd[:2] == ["file", "cp"] and len(cmd) == 4 and cmd[3].endswith(":"):
+    mode = os.environ.get("HERMES_FAKE_TAILDROP", "ok")
+    if mode == "offline":
+        print("cannot send to %s: peer is offline" % cmd[3][:-1], file=sys.stderr)
+        sys.exit(1)
+    if mode == "hang":
+        time.sleep(3600)
+    device = os.environ.get("HERMES_FAKE_DEVICE")
+    if device:
+        os.makedirs(device, exist_ok=True)
+        shutil.copyfile(cmd[2], os.path.join(device, os.path.basename(cmd[2])))
+        with open(os.path.join(device, "sent.log"), "a") as f:
+            f.write("cp %s %s\n" % (cmd[2], cmd[3][:-1]))
+    sys.exit(0)
+if cmd[:2] == ["file", "get"] and len(cmd) >= 3:
+    if "--wait" in cmd:
+        print("the fake never waits", file=sys.stderr)
+        sys.exit(2)
+    target, waiting = cmd[-1], os.environ.get("HERMES_FAKE_TAILDROPS")
+    if waiting and os.path.isdir(waiting):
+        for name in sorted(os.listdir(waiting)):
+            shutil.move(os.path.join(waiting, name), os.path.join(target, name))
+    sys.exit(0)
+if cmd == ["version"]:
+    print("1.80.0\n  tailscale commit: fake\n  go version: fake")
+    sys.exit(0)
+print("fake tailscale: unknown command %r" % " ".join(cmd), file=sys.stderr)
+sys.exit(2)

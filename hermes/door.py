@@ -13,6 +13,7 @@ exits non-zero only when Hermes itself fails (config, disk); a quarantine is Jan
 halfway is finished by the next one: verdict.json is written into the arrival before anything moves, so a verdict is
 never asked twice and a file is never delivered twice. Nothing is deleted: only renames into the set-aside folders or
 the dated set-aside of hermes discard."""
+import fcntl
 import json
 import os
 import re
@@ -22,6 +23,7 @@ import sys
 import time
 import urllib.request
 from collections import Counter
+from datetime import datetime
 from pathlib import Path
 
 from hermes import config, log, receive, version
@@ -30,7 +32,10 @@ JANUS = "janus"                      # or $HERMES_JANUS
 JANUS_TIMEOUT = 30                   # seconds, plus one per 20 MB of file; $HERMES_JANUS_TIMEOUT overrides (tests)
 JANUS_RATE = 20 * 1024 * 1024
 VERDICTS = {0: "pass", 10: "quarantine", 11: "duplicate"}
-FOLDERS = ("in", "held", "quarantine", "skipped", "replaced", "delivered", "failed")
+FOLDERS = ("in", "held", "quarantine", "skipped", "replaced", "delivered", "failed", "outbox", "undelivered")
+TAILSCALE = "tailscale"              # or $HERMES_TAILSCALE
+SEND_TIMEOUT = 60                    # seconds for tailscale file cp before the device counts as asleep, plus one per MB
+RETRY_HOURS = 24                     # how long an outbound item waits for a sleeping device when the route says nothing
 SET_ASIDE = "~/.local/share/hermes"  # hermes discard moves to <here>/.set-aside-YYYYMMDD-HHMMSS/<id>/
 REASON = re.compile(r"[A-Za-z0-9_-]{1,40}")
 CONFLICT_SUFFIX = re.compile(r" \((\d+)\)$")
@@ -184,6 +189,67 @@ def ring_jellyfin(cfg, env):
 DOORBELLS = {"jellyfin-refresh": ring_jellyfin}
 
 
+# ---------- outbound: Taildrop ----------
+def taildrop_send(path, device, nbytes, env):
+    """tailscale file cp <path> <device>: -> (sent, why not). A device that is asleep makes cp fail or hang."""
+    timeout = SEND_TIMEOUT + (nbytes or 0) / (1024 * 1024)
+    try:
+        r = subprocess.run([env.get("HERMES_TAILSCALE") or TAILSCALE, "file", "cp", str(path), device + ":"],
+                           capture_output=True, text=True, timeout=timeout, env=dict(env))
+    except FileNotFoundError:
+        return False, "tailscale is not installed"
+    except subprocess.TimeoutExpired:
+        return False, "tailscale file cp gave no answer in %g s; %s is probably asleep" % (timeout, device)
+    except OSError as e:
+        return False, "tailscale file cp could not run: %s" % e
+    if r.returncode == 0:
+        return True, ""
+    return False, "tailscale file cp failed (exit %d): %s" % (r.returncode, (r.stderr or r.stdout).strip()[:200] or "no output")
+
+
+def first_try(arrival):
+    try:
+        stamp = (arrival / "tries.txt").read_text(encoding="utf-8").split(None, 1)[0]
+        return datetime.fromisoformat(stamp)
+    except (OSError, ValueError, IndexError):
+        return None
+
+
+def deliver_out(stage, arrival, meta, route, doc, env, out, outcome="sent", **more):
+    """A passed outbound arrival to its device by Taildrop, as <prefix><name>. Sent: Hermes removes its own staging
+    link and the folder goes to delivered/. Not sent (the device is asleep): the folder waits in outbox/ and
+    hermes collect tries again on every run, for the route's retry_hours; then it is undelivered. Returns the word."""
+    name = route.prefix + receive.check_name(meta.get("name"))
+    staged = arrival / name
+    if not staged.exists() and (arrival / "data").exists():
+        os.rename(arrival / "data", staged)                  # Taildrop sends a file under its own name
+    if staged.exists():
+        sent, why = taildrop_send(staged, route.device, meta.get("bytes"), env)
+    else:
+        sent, why = True, ""                                 # an interrupted run removed the link after the send
+    where = "taildrop:" + route.device
+    if sent:
+        if staged.exists():
+            os.remove(staged)                                # Hermes's own link, after Tailscale confirmed the send
+        if not log.seen(meta.get("id"), outcome):
+            log.write(entry(meta, outcome, to=where, name=name, verdict=doc.get("verdict"), reasons=doc.get("reasons") or [], **more))
+        move(arrival, stage / "delivered" / arrival.name)
+        return outcome
+    note(arrival, "tries.txt", why)
+    hours = route.retry_hours or RETRY_HOURS
+    since = first_try(arrival) or datetime.now().astimezone()
+    if (datetime.now().astimezone() - since).total_seconds() > hours * 3600:
+        note(arrival, "tries.txt", "%s was unreachable for %g hours." % (route.device, hours))
+        move(arrival, stage / "undelivered" / arrival.name)
+        log.write(entry(meta, "undelivered", to=where, name=name, verdict=doc.get("verdict"),
+                        reasons=[why, "%s was unreachable for %g hours." % (route.device, hours)]))
+        return "undelivered"
+    if arrival.parent.name != "outbox":
+        move(arrival, stage / "outbox" / arrival.name)
+        log.write(entry(meta, "waiting", to=where, name=name, verdict=doc.get("verdict"), reasons=[why]))
+    return "waiting"
+
+
 # ---------- one arrival ----------
 def read_meta(arrival):
     doc = log.read_json(arrival / "meta.json")
@@ -260,9 +326,16 @@ def process(cfg, stage, arrival, env, out):
         try:
             if route is None:
                 raise HermesVerdict("There is no route %r on this server any more." % meta["route"])
-            if route.outbound:
-                raise Held("route %s goes out to a device; sending is not built yet" % route.id)
-            destination(route, meta)                         # a bad name is quarantined before Janus works on it
+            if route.outbound != (meta.get("direction") == "out"):
+                raise HermesVerdict("The arrival goes %s, but route %s goes %s." % (
+                    "out" if meta.get("direction") == "out" else "in", route.id, "out to a device" if route.outbound else "to a folder here"))
+            if route.outbound:                               # a bad name is quarantined before Janus works on it
+                try:
+                    receive.check_name(meta.get("name"))
+                except receive.Refused as e:
+                    raise HermesVerdict("Hermes refused the file's name: %s." % e)
+            else:
+                destination(route, meta)
             verdict, doc = ask_janus(arrival, meta.get("bytes"), env)
         except Held as e:
             note(arrival, "held.txt", str(e))
@@ -274,9 +347,11 @@ def process(cfg, stage, arrival, env, out):
         receive.write_json(arrival / "verdict.json", doc)   # from here on, a crash never asks Janus again
     verdict = doc["verdict"]
     if verdict == "pass":
+        if route.outbound:
+            return deliver_out(stage, arrival, meta, route, doc, env, out)
         return deliver(cfg, stage, arrival, meta, route, doc, env, out)
     if verdict == "quarantine":
-        if (arrival / "data").exists():
+        if (arrival / "data").exists() and meta.get("direction") != "out":   # an outbound data is a hardlink to the original
             os.chmod(arrival / "data", 0o400)
         move(arrival, stage / "quarantine" / aid)
         log.write(entry(meta, "quarantined", verdict=verdict, reasons=doc.get("reasons") or []))
@@ -294,12 +369,14 @@ def load(env):
         raise DoorError("%s; nothing was delivered" % e)
 
 
-def run(env=None, out=None, only=None):
-    """hermes door: every arrival in every stage's in/ (held/ first, for another try). Returns the exit status."""
+def run(env=None, out=None, only=None, cfg=None, quiet=False):
+    """hermes door: every arrival in every stage's in/ (held/ first, for another try), or just the ids in `only`.
+    One door per stage at a time (a lock file), so hermes send, hermes collect and the path unit never race.
+    Returns the exit status."""
     env = os.environ if env is None else env
     out = out or sys.stdout
     try:
-        cfg = load(env)
+        cfg = cfg or load(env)
     except DoorError as e:
         print("hermes door: %s" % e, file=sys.stderr)
         return 1
@@ -308,18 +385,36 @@ def run(env=None, out=None, only=None):
         try:
             for name in FOLDERS:
                 (stage / name).mkdir(exist_ok=True)
+            lock = open(stage / ".door.lock", "w")
+            fcntl.flock(lock, fcntl.LOCK_EX)
         except OSError as e:
             print("hermes door: cannot make the folders in %s: %s" % (stage, e), file=sys.stderr)
             failures += 1
             continue
+        try:
+            outcomes_here, failures_here = run_stage(cfg, stage, env, out, only)
+        finally:
+            lock.close()
+        outcomes.update(outcomes_here)
+        failures += failures_here
+    log.update_alert(cfg)
+    words = ", ".join("%d %s" % (n, w) for w, n in sorted(outcomes.items())) or "nothing waiting"
+    if not quiet:
+        print("hermes door: %s%s" % (words, "; %d failure%s" % (failures, "" if failures == 1 else "s") if failures else ""), file=out)
+    return 1 if failures else 0
+
+
+def run_stage(cfg, stage, env, out, only):
+    outcomes, failures = Counter(), 0
+    if True:
         for held in sorted((stage / "held").iterdir()):
-            if held.is_dir() and (only is None or held.name == only) and not (stage / "in" / held.name).exists():
+            if held.is_dir() and (only is None or held.name in only) and not (stage / "in" / held.name).exists():
                 try:
                     os.rename(held, stage / "in" / held.name)
                 except OSError as e:
                     print("hermes door: cannot retry %s: %s" % (held.name, e), file=sys.stderr)
         for arrival in sorted((stage / "in").iterdir()):
-            if only is not None and arrival.name != only:
+            if only is not None and arrival.name not in only:
                 continue
             if not arrival.is_dir():                         # a stray file is not an arrival; it still leaves in/
                 try:
@@ -341,14 +436,12 @@ def run(env=None, out=None, only=None):
                         os.rename(arrival, stage / "held" / arrival.name)
                 except OSError:
                     pass
-    log.update_alert(cfg)
-    words = ", ".join("%d %s" % (n, w) for w, n in sorted(outcomes.items())) or "nothing waiting"
-    print("hermes door: %s%s" % (words, "; %d failure%s" % (failures, "" if failures == 1 else "s") if failures else ""), file=out)
-    return 1 if failures else 0
+    return outcomes, failures
 
 
 # ---------- retry, release, discard ----------
 def find(cfg, aid, folders):
+    """-> (stage, folder, path) of an arrival that sits in one of the folders. DoorError when it is nowhere."""
     for stage in cfg.stages.values():
         for folder in folders:
             if (stage / folder / aid).is_dir():
@@ -366,7 +459,7 @@ def retry(aid, env=None, out=None):
     except DoorError as e:
         print("hermes retry: %s" % e, file=sys.stderr)
         return 1
-    return run(env, out, only=aid)
+    return run(env, out, only={aid})
 
 
 def release(aid, reason, env=None, out=None):
@@ -382,20 +475,26 @@ def release(aid, reason, env=None, out=None):
         if meta is None:
             raise DoorError("%s has no readable meta.json; it cannot be delivered" % aid)
         route = cfg.routes.get(meta["route"])
-        if route is None or route.outbound:
-            raise DoorError("route %r is not an inbound route on this server; %s cannot be delivered" % (meta["route"], aid))
+        if route is None or route.outbound != (meta.get("direction") == "out"):
+            raise DoorError("route %r does not fit arrival %s (direction %s); it cannot be delivered" % (meta["route"], aid, meta.get("direction")))
         try:
-            destination(route, meta)
-        except HermesVerdict as e:
+            if route.outbound:
+                receive.check_name(meta.get("name"))
+            else:
+                destination(route, meta)
+        except (HermesVerdict, receive.Refused) as e:
             raise DoorError("%s cannot be released: %s" % (aid, e))
         w = receive.whois(env)                                # who released it: the ssh user, and whois on the connection
         who = {"user": env.get("USER") or env.get("LOGNAME"), "reason": reason, "node": w["node"], "login": w["user"], "ip": w["ip"]}
         doc = log.read_json(path / "verdict.json") or hermes_verdict(meta, "released without a verdict")
         doc["released"] = {"at": log.now(), **who}
         receive.write_json(path / "verdict.json", doc)
-        if (path / "data").exists():
+        if (path / "data").exists() and meta.get("direction") != "out":
             os.chmod(path / "data", 0o600)
-        outcome = deliver(cfg, stage, path, meta, route, doc, env, out, outcome="released", released_by=who)
+        if route.outbound:
+            outcome = deliver_out(stage, path, meta, route, doc, env, out, outcome="released", released_by=who)
+        else:
+            outcome = deliver(cfg, stage, path, meta, route, doc, env, out, outcome="released", released_by=who)
         log.update_alert(cfg)
         print("hermes release: %s %s (%s)" % (aid, outcome, reason), file=out)
         return 0
@@ -413,7 +512,7 @@ def discard(aid, env=None, out=None):
     out = out or sys.stdout
     try:
         cfg = load(env)
-        stage, folder, path = find(cfg, aid, ("quarantine", "held", "skipped", "failed", "replaced"))
+        stage, folder, path = find(cfg, aid, ("quarantine", "held", "skipped", "failed", "replaced", "outbox", "undelivered"))
         meta = read_meta(path) or {"id": aid, "route": None}
         aside = Path(os.path.expanduser(SET_ASIDE)) / time.strftime(".set-aside-%Y%m%d-%H%M%S") / aid
         move(path, aside)

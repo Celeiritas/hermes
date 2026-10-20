@@ -4,7 +4,7 @@ import sys
 
 import json
 
-from hermes import config, door, keys, log, receive, version
+from hermes import config, door, keys, log, receive, send, version
 
 DESCRIPTION = "Hermes carries files and short messages between the devices of one tailnet. It never runs, unpacks or installs anything."
 
@@ -94,6 +94,16 @@ def build_parser():
     p = sub.add_parser("discard", help="move a set-aside arrival to a dated set-aside folder (never deleted)")
     p.add_argument("id")
     p.set_defaults(func=lambda a: door.discard(a.id))
+    p = sub.add_parser("send", help="send files from this server to a device by Taildrop, through the door")
+    p.add_argument("route", help="an outbound route, e.g. pcmail")
+    p.add_argument("files", nargs="*")
+    p.set_defaults(func=lambda a: send.send(a.route, a.files))
+    p = sub.add_parser("message", help="a note, link or magnet link (text on stdin, 4 KB at most) on a route, through the door")
+    p.add_argument("route")
+    p.add_argument("--user", help="who sent it, when known (the Delivery page passes the tailnet login)")
+    p.set_defaults(func=lambda a: send.message(a.route, sys.stdin.buffer.read(send.MESSAGE_MAX + 1), user=a.user))
+    p = sub.add_parser("collect", help="retry the outbox, then pick up the phones' Taildrops (hermes-taildrop.timer)")
+    p.set_defaults(func=lambda a: send.collect())
     p = sub.add_parser("log", help="the delivery log, newest last")
     p.add_argument("--json", action="store_true", help="one JSON object per line, as in the log file")
     p.add_argument("-n", type=int, default=50, metavar="N", help="how many lines (default 50; 0 = all)")
