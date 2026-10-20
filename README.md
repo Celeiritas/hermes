@@ -16,7 +16,7 @@ sender ─ssh, Hermes key─▶ hermes receive ─▶ <stage>/incoming/<id>/ ─
    duplicate ─▶ <stage>/skipped/<id>/ ─▶ log
    Janus missing / failed / timed out ─▶ <stage>/held/<id>/ ─▶ log + alert (never delivered unchecked)
 ```
-A **route** names where things go (`~/.config/hermes/routes.json`, see `examples/routes.example.json`). Who may send what on a route is Janus's file, not Hermes's, so the carrier can never widen its own permissions. No route ever accepts executables or scripts.
+A **route** names where things go (`~/.config/hermes/routes.json`, see `examples/routes.example.json`). Who may send what on a route is Janus's file, not Hermes's, so the carrier can never widen its own permissions. No route ever accepts executables or scripts. `hermes check-config` says in one sentence per route where its files go, and lists what is wrong with the file and how to fix it.
 
 ## Repository
 `docs/design.md` is the design: decisions, routes, the door, fetching, the Delivery page and the build order. `hermes/` is the package, `clients/windows/` the PC client, `plugin/` the Elaia page, `units/` the systemd units, `scripts/` build, install and the privacy check, `tests/` the tests (`bash tests/run.sh`, with a fake Janus in `tests/fixtures/`).
