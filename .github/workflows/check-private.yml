@@ -1,0 +1,19 @@
+# No personal data in a pull request: the generic part of scripts/check-private.sh (home paths, *.ts.net names,
+# IP addresses, emails) on every commit the PR adds, and on the whole tree as it would be after merging.
+name: check-private
+on: pull_request
+permissions:
+  contents: read
+jobs:
+  check-private:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+      - name: Commits in this pull request
+        env:
+          BASE: ${{ github.base_ref }}
+        run: bash scripts/check-private.sh --generic "origin/$BASE..HEAD"
+      - name: Whole tree
+        run: bash scripts/check-private.sh --generic --tree

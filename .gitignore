@@ -218,3 +218,9 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# Hermes
+CLAUDE.local.md
+node_modules/
+tests/out/
+# never ignore package-lock.json: if npm is ever used, commit it

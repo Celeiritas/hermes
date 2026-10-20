@@ -1,0 +1,74 @@
+#!/usr/bin/env python3
+"""A fake Janus for Hermes's tests. It follows the contract in docs/design.md (§3, "The Janus contract") and never
+writes into the arrival:
+    janus check --json <arrival dir>      reads meta.json and data; prints one JSON verdict on stdout
+    exit 0 = pass · 10 = quarantine · 11 = duplicate · anything else = Janus failed (Hermes holds the arrival)
+The verdict comes from HERMES_FAKE_JANUS when it is set (pass | quarantine | duplicate | fail | hang; "hang" never
+returns, for timeout tests). Otherwise the file decides: a size or sha256 that doesn't match meta.json is a quarantine
+(integrity), an executable or script name is a quarantine (kind), a name containing "duplicate" is a duplicate, and
+anything else passes."""
+import hashlib
+import json
+import os
+import sys
+import time
+
+VERSION = "0.0-fake"
+EXIT = {"pass": 0, "quarantine": 10, "duplicate": 11, "fail": 1}
+NEVER = (".exe", ".msi", ".bat", ".cmd", ".ps1", ".sh", ".com", ".scr", ".dll", ".py", ".js", ".vbs")
+
+
+def sha256(path):
+    h = hashlib.sha256()
+    with open(path, "rb") as f:
+        for chunk in iter(lambda: f.read(1 << 16), b""):
+            h.update(chunk)
+    return h.hexdigest()
+
+
+def check(arrival):
+    checks = {"route": "ok", "kind": "ok", "shape": "ok", "integrity": "ok"}
+    reasons = []
+    try:
+        with open(os.path.join(arrival, "meta.json")) as f:
+            meta = json.load(f)
+        data = os.path.join(arrival, "data")
+        digest = sha256(data)
+        size = os.path.getsize(data)
+    except (OSError, ValueError) as e:
+        print("janus: cannot read the arrival: %s" % e, file=sys.stderr)
+        return "fail", {"verdict": "fail", "reasons": ["Janus could not read the arrival."], "sha256": None,
+                        "janus": VERSION, "checks": checks}
+    forced = os.environ.get("HERMES_FAKE_JANUS")
+    if forced == "hang":
+        time.sleep(3600)
+    if forced in EXIT:
+        verdict = forced
+        if verdict != "pass":
+            reasons.append("The fake Janus was told to answer %s." % verdict)
+    else:
+        name = str(meta.get("name", "")).lower()
+        verdict = "pass"
+        if size != meta.get("bytes") or digest != meta.get("sha256"):
+            verdict, checks["integrity"] = "quarantine", "fail"
+            reasons.append("The file's size or SHA-256 does not match what the sender declared.")
+        elif name.endswith(NEVER):
+            verdict, checks["kind"] = "quarantine", "fail"
+            reasons.append("%s files are never allowed on any route." % name[name.rfind("."):])
+        elif "duplicate" in name:
+            verdict = "duplicate"
+            reasons.append("This file was already delivered.")
+    return verdict, {"verdict": verdict, "reasons": reasons, "sha256": digest, "janus": VERSION, "checks": checks}
+
+
+def main(argv):
+    if len(argv) != 4 or argv[1] != "check" or argv[2] != "--json":
+        print("usage: janus check --json <arrival dir>", file=sys.stderr)
+        return 2
+    verdict, out = check(argv[3])
+    print(json.dumps(out))
+    return EXIT[verdict]
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv))

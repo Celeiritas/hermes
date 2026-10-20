@@ -1,0 +1,17 @@
+# Build the zipapp and run the tests on every pull request (and on main), with nothing but Python 3 installed.
+name: tests
+on:
+  pull_request:
+  push:
+    branches: [main]
+permissions:
+  contents: read
+jobs:
+  tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - name: Build and run the zipapp
+        run: bash scripts/build.sh && ./dist/hermes --version
+      - name: Tests
+        run: bash tests/run.sh
