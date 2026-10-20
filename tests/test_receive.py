@@ -215,7 +215,7 @@ class ReceiveTest(unittest.TestCase):
                 self.assertNotIn("Traceback", err)
                 self.assertNothingWritten()
         code, _, _ = self.run_receive(put_cmd("lesson", "a.txt", data, size="0001"), data)
-        self.assertEqual(code, 1)                        # leading zeros are digits: declared 1, which is just a short stream
+        self.assertEqual(code, 0)                        # leading zeros are plain digits: 0001 declares 1 byte
 
     def test_idle_timeout_while_streaming(self):
         r, w = os.pipe()
