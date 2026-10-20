@@ -1,0 +1,29 @@
+{
+  "version": 1,
+  "stages": {
+    "home":  "~/.local/share/hermes/stage",
+    "media": "/srv/media/.hermes"
+  },
+  "routes": {
+    "lesson":         { "to": "~/.local/share/argus-ui/inbox/", "stage": "home",  "conflict": "replace" },
+    "servermail":     { "to": "~/Hermes-Mail/",                 "stage": "home",  "conflict": "rename" },
+    "torrent":        { "to": "~/Downloads/torrents/watch/",    "stage": "media", "conflict": "skip" },
+    "torrent-movies": { "to": "~/Downloads/torrents/watch/movies/", "stage": "media", "conflict": "skip" },
+    "roms":           { "to": "/srv/media/Emulation/_incoming/", "stage": "media", "conflict": "rename" },
+    "jellyfin-theme": { "to": "/srv/media/Media/Shows/", "stage": "media", "subpath": true,
+                        "conflict": "skip", "after": "jellyfin-refresh" },
+    "pcmail":         { "to": "taildrop:{{PC}}",    "prefix": "hermes__", "stage": "home", "retry_hours": 24 },
+    "phone":          { "to": "taildrop:{{PHONE}}", "stage": "home", "retry_hours": 24 },
+    "deploy-request": { "to": "~/.local/share/zeus/requests/", "stage": "home", "enabled": false }
+  },
+  "taildrop": { "by_kind": { ".torrent": "torrent", ".magnet": "torrent" }, "default": "servermail" },
+  "fetch": {
+    "jellyfin-themes": { "job": "hermes-jellyfin", "route": "jellyfin-theme",
+                         "allow": ["tvthemes.plexapp.com"], "jellyfin": "http://localhost:8096",
+                         "key_file": "~/.config/leafy/jellyfin.key" },
+    "decks":  { "job": "hermes-decks", "route": "lesson",
+                "repo": "git@github-realm:you/realm.git", "paths": ["decks/*.json"] },
+    "github": { "job": "hermes-github", "route": "deploy-request",
+                "repos": ["Celeiritas/argus-ui", "Celeiritas/hermes", "you/realm"] }
+  }
+}
