@@ -1,0 +1,14 @@
+# Dolphin service menu: right-click any file(s) on {{SERVER}} -> "Hermes: send to {{PC}}" -> hermes send pcmail <files>.
+# Install: mkdir -p ~/.local/share/kio/servicemenus && cp clients/dolphin/hermes-send-to-pc.desktop ~/.local/share/kio/servicemenus/
+#          && chmod +x ~/.local/share/kio/servicemenus/hermes-send-to-pc.desktop   (scripts/install.sh fills in {{PC}})
+[Desktop Entry]
+Type=Service
+X-KDE-ServiceTypes=KonqPopupMenu/Plugin
+MimeType=all/allfiles;
+Actions=hermesSendToPC;
+X-KDE-Priority=TopLevel
+
+[Desktop Action hermesSendToPC]
+Name=Hermes: send to {{PC}}
+Icon=document-send
+Exec=sh -c 'exec "$HOME/.local/bin/hermes" send pcmail "$@"' hermes %F

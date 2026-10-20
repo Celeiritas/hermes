@@ -1,0 +1,2 @@
+# Dolphin service menu
+`hermes-send-to-pc.desktop` adds "Hermes: send to {{PC}}" to Dolphin's right-click menu on {{SERVER}}: it runs `hermes send pcmail` on the selected files, which stages a hardlink of each (the originals are never touched), lets Janus check them, and sends them by Taildrop as `hermes__<name>`. The install line is in the file's header; `{{PC}}` is filled in from `realm.json` by `scripts/install.sh` (a later issue).

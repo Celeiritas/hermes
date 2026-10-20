@@ -78,7 +78,7 @@ class DoorTest(unittest.TestCase):
         """Every file under the temporary HOME except logs and state: the proof that nothing is deleted."""
         skip = (self.home / ".local/share/hermes/log", self.home / ".local/state")
         return sorted(str(p.relative_to(self.home)) for p in self.home.rglob("*")
-                      if p.is_file() and not any(s in p.parents for s in skip))
+                      if p.is_file() and p.name != ".door.lock" and not any(s in p.parents for s in skip))
 
     def log_entries(self):
         return log.entries()
@@ -301,9 +301,10 @@ class DoorTest(unittest.TestCase):
         self.run_door()
         self.assertIn(aid, self.listing("quarantine"))
         self.assertIn("no route 'gone'", json.loads((self.stage / "quarantine" / aid / "verdict.json").read_text())["reasons"][0])
-        aid = self.arrival("pcmail", "a.json")
+        aid = self.arrival("pcmail", "a.json")                   # an inbound arrival on a route that goes out
         self.run_door()
-        self.assertIn(aid, self.listing("held"))
+        self.assertIn(aid, self.listing("quarantine"))
+        self.assertIn("goes in, but route pcmail goes out to a device", json.loads((self.stage / "quarantine" / aid / "verdict.json").read_text())["reasons"][0])
 
     def test_junk_in_in_leaves_in(self):
         (self.stage / "in" / "stray.txt").write_text("x")
