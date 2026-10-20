@@ -17,6 +17,6 @@ Hermes carries files and short messages between the devices of one tailnet, and 
 - **Placeholders, never real names.** Public text (code, docs, examples, tests, commit messages) says `{{SERVER}}`, `{{PC}}`, `{{PHONE}}`, `{{SSH}}`, `{{HOME_PC}}`, `{{HOME_SERVER}}`, never a real device, user, path, host or account. The owner's real config lives in the private realm repo. Your own notes go in `CLAUDE.local.md` (gitignored).
 - **Run `bash scripts/check-private.sh` before every push** (once per clone: `bash scripts/install-hooks.sh` makes it automatic). Fix what it finds; `private-ok` on a line is only for a deliberate example of a pattern, such as Tailscale's fixed ranges.
 - **Branches are `<area>/<topic>`** (`door/quarantine`, `docs/design`). One issue → one pull request, small commits with clear messages. The owner merges.
-- **Bump `VERSION` and add a `CHANGELOG.md` entry** for every change that ships.
+- **Bump `VERSION` and add a `CHANGELOG.md` entry** for every change that ships. Before 1.0 the minor number is the milestone (the issue's label: v0.1 = the door, v0.2 = both ways …), so work inside a milestone bumps the patch (0.1.2 → 0.1.3) and the first change of the next milestone bumps the minor (→ 0.2.0).
 - Standard library only on the server; PowerShell 5 only on the PC. If npm is ever used for test tooling, commit `package-lock.json`.
 - Never commit keys, `jellyfin.key`, `secret.env`, logs, quarantine contents or sound files.
