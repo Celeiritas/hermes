@@ -7,6 +7,7 @@ import hashlib
 import io
 import json
 import os
+import re
 import subprocess
 import sys
 import tempfile
@@ -26,7 +27,7 @@ def b64(name):
 
 
 def put_cmd(route, name, data, digest=None, size=None):
-    return "put %s %s %d %s" % (route, b64(name), len(data) if size is None else size,
+    return "put %s %s %s %s" % (route, b64(name), len(data) if size is None else size,
                                 digest or hashlib.sha256(data).hexdigest())
 
 
@@ -181,11 +182,96 @@ class ReceiveTest(unittest.TestCase):
         self.assertRefused("put lesson !!! 1 " + "0" * 64, "not base64url", data)
         self.assertRefused("put lesson %s 1 %s" % (base64.urlsafe_b64encode(b"\xff\xfe").decode(), "0" * 64), "not base64url", data)
 
+    def test_names_that_disguise_or_break(self):
+        data = b"x"
+        for name, why in [("photo\u202egpj.exe", "control, invisible or direction-changing character ('photo\\u202egpj.exe', U+202E)"),
+                          ("a\u200bb.txt", "U+200B"), ("a\u0085b.txt", "U+0085"), ("a\u00adb.txt", "U+00AD"),
+                          ("a\ue000b.txt", "U+E000"), ("a\u2028b.txt", "U+2028"), ("a\u2029b.txt", "U+2029"),
+                          ("a.txt ", "ends with a space or a dot"), ("a.txt.", "ends with a space or a dot"),
+                          ("a.txt. ", "ends with a space or a dot")]:
+            with self.subTest(name):
+                self.assertRefused(put_cmd("lesson", name, data), why, data)
+
+    def test_names_are_nfc_normalized(self):
+        data = b"x"
+        decomposed = "cafe\u0301.txt"                   # e + combining acute
+        self.assertEqual(len(decomposed), 9)
+        code, out, _ = self.run_receive(put_cmd("lesson", decomposed, data), data)
+        self.assertEqual(code, 0)
+        meta = json.loads((self.stage / "in" / out.split()[1] / "meta.json").read_text())
+        self.assertEqual(meta["name"], "caf\u00e9.txt")
+        self.assertEqual(len(meta["name"]), 8)
+        long_after_nfc = "e" + "\u0301" * 150 + ".txt"    # 155 code points before, 2 + 149 after: still refused by category? no: combining marks are Mn
+        code, out, _ = self.run_receive(put_cmd("lesson", long_after_nfc, data), data)
+        self.assertEqual(code, 0)
+
+    def test_sizes_must_be_plain_digits(self):
+        data = b"x"
+        for size in ("\u00b2", "\u0661", "1e3", "-1", "+1", "", "1" * 16):
+            with self.subTest(size):
+                code, out, err = self.run_receive("put lesson %s %s %s" % (b64("a.txt"), size, "0" * 64), data)
+                self.assertEqual((code, out), (2, ""), err)
+                self.assertIn("exactly four arguments" if size == "" else "must be a number of plain digits", err)
+                self.assertNotIn("Traceback", err)
+                self.assertNothingWritten()
+        code, _, _ = self.run_receive(put_cmd("lesson", "a.txt", data, size="0001"), data)
+        self.assertEqual(code, 1)                        # leading zeros are digits: declared 1, which is just a short stream
+
+    def test_idle_timeout_while_streaming(self):
+        r, w = os.pipe()
+        self.addCleanup(os.close, w)
+        data = b"x" * 100
+        os.write(w, data[:30])                           # the sender stalls after 30 bytes and never closes
+        with os.fdopen(r, "rb", buffering=0) as stdin:
+            code, out, err = self.run_receive(put_cmd("lesson", "a.txt", data), stdin, HERMES_IDLE_TIMEOUT="0.2")
+        self.assertEqual((code, out), (1, ""))
+        self.assertIn("no data for 0.2 s", err)
+        self.assertEqual(self.arrivals("in"), [])
+        self.assertEqual(self.arrivals("incoming"), [])
+        aside = self.stage / "failed" / self.arrivals("failed")[0]
+        self.assertEqual((aside / "data").read_bytes(), data[:30])
+        self.assertIn("no data for 0.2 s", (aside / "error.txt").read_text())
+
+    def test_idle_timeout_waiting_for_the_end(self):
+        r, w = os.pipe()
+        self.addCleanup(os.close, w)
+        data = b"x" * 100
+        os.write(w, data)                                # every byte arrived, but the sender never closes its end
+        with os.fdopen(r, "rb", buffering=0) as stdin:
+            code, _, err = self.run_receive(put_cmd("lesson", "a.txt", data), stdin, HERMES_IDLE_TIMEOUT="0.2")
+        self.assertEqual(code, 1)
+        self.assertIn("no data for 0.2 s", err)
+        self.assertEqual(self.arrivals("in"), [])
+        self.assertEqual(len(self.arrivals("failed")), 1)
+
+    def test_a_pipe_that_closes_in_time_is_fine(self):
+        r, w = os.pipe()
+        data = b"y" * 3000
+        os.write(w, data)
+        os.close(w)
+        with os.fdopen(r, "rb", buffering=0) as stdin:
+            code, out, err = self.run_receive(put_cmd("lesson", "a.txt", data), stdin, HERMES_IDLE_TIMEOUT="0.2")
+        self.assertEqual((code, err), (0, ""))
+        self.assertEqual((self.stage / "in" / out.split()[1] / "data").read_bytes(), data)
+
+    def test_an_unexpected_error_shows_the_sender_one_line(self):
+        data = b"x"
+        with mock.patch.object(receive, "put", side_effect=RuntimeError("stat failed on /srv/somewhere/private")):
+            code, out, err = self.run_receive(put_cmd("lesson", "a.txt", data), data)
+        self.assertEqual((code, out), (3, ""))
+        self.assertEqual(err, "hermes: the server hit an unexpected error; the owner can see it in " + receive.ERROR_LOG + "\n")
+        self.assertNotIn("Traceback", err)
+        self.assertNotIn("private", err)
+        log = (self.home / ".local/share/hermes/log/receive-errors.log").read_text()
+        self.assertIn("Traceback (most recent call last)", log)
+        self.assertIn("RuntimeError: stat failed on /srv/somewhere/private", log)
+        self.assertRegex(log, r"^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d[+-]\d\d:\d\d hermes receive\n")
+
     def test_bad_commands(self):
         self.assertRefused("ls -la", "unknown command 'ls -la'")
         self.assertRefused("", "unknown command")
         self.assertRefused("put lesson " + b64("a"), "exactly four arguments")
-        self.assertRefused("put lesson %s ten %s" % (b64("a"), "0" * 64), "<bytes> must be a number")
+        self.assertRefused("put lesson %s ten %s" % (b64("a"), "0" * 64), "<bytes> must be a number of plain digits")
         self.assertRefused("put lesson %s 1 zz" % b64("a"), "<sha256> must be 64 hex")
         self.assertRefused("ping extra", "unknown command")
         self.assertRefused(None, "no command. hermes receive runs only as an ssh forced command")
