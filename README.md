@@ -2,7 +2,7 @@
 
 Hermes is the delivery agent of an Elaia/Argus home setup ([argus-ui](https://github.com/Celeiritas/argus-ui)). It carries files and short messages between the devices of one tailnet, in both directions, and fetches from allowlisted sources. **It never runs, unpacks or installs anything.** Its companions: **Janus** checks every delivery at the door, **Zeus** deploys (only on the owner's approval), **Argus** watches every task.
 
-On the server Hermes is one file, a Python 3 zipapp with no dependencies (`bash scripts/build.sh` → `dist/hermes`). On a Windows PC it is one PowerShell 5 script. Nothing of Hermes runs while idle: sshd, one systemd path unit and a few timers start it, and every job exits when its work is done.
+On the server Hermes is one file, a Python 3 zipapp with no dependencies (`bash scripts/build.sh` → `dist/hermes`). On a Windows PC it is one PowerShell 5 script (`clients/windows/hermes.ps1`: send, collect, setup, plus the right-click Send To entries; `docs/windows-client.md`). Nothing of Hermes runs while idle: sshd, one systemd path unit and a few timers start it, and every job exits when its work is done.
 
 ## The door
 Every delivery, in either direction, passes the server's door, where Janus checks it before it goes anywhere:
