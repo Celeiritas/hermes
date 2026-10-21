@@ -7,7 +7,7 @@ Every device that sends files to {{SERVER}} has its own Hermes-only ssh key. On 
    ```
    ssh-keygen -t ed25519 -f hermes_{{PC}} -C hermes@{{PC}} -N ""
    ```
-   On Windows the key goes in `{{HOME_PC}}\.ssh\`; `hermes.ps1 setup` (the Windows client, a later issue) does this step.
+   On Windows the key goes in `{{HOME_PC}}\.ssh\`; `hermes.ps1 setup` (the Windows client, `docs/windows-client.md`) does this step, the alias in step 3, and prints the line for step 2.
 2. **Copy the public half** (`hermes_{{PC}}.pub`, one line) to {{SERVER}}, then add it:
    ```
    hermes keys add {{PC}} hermes_{{PC}}.pub      # or:  cat hermes_{{PC}}.pub | ssh {{SSH}} 'hermes keys add {{PC}}'

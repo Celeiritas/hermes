@@ -224,3 +224,6 @@ CLAUDE.local.md
 node_modules/
 tests/out/
 # never ignore package-lock.json: if npm is ever used, commit it
+
+# Hermes: the Windows client makes this from hermes.png at install time
+clients/windows/hermes.ico
