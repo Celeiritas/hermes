@@ -68,4 +68,4 @@ CI can't run PowerShell against a real server, so these are done by hand on {{PC
 | 12 | collect | on the server `tailscale file cp f.txt {{PC}}:` as `hermes__f.txt`; `hermes.ps1 collect` | `f.txt` in `{{HOME_PC}}\Hermes-Mail\`, the folder opens, `1 file(s) arrived` |
 | 13 | key does nothing else | the table in `docs/keys.md` | each refused |
 
-Last run: _(date, hermes version, by whom; against which server and port)_
+Last run: 2026-10-20, hermes 0.2.1, {{PC}} → {{SERVER}} over Tailscale, against a user-level OpenSSH `sshd` on a test port bound to the server's Tailscale address (the server's port 22 is Tailscale SSH) with a test `routes.json`. Items 1–13 all as expected; the 2 GiB file took 945 s through a Tailscale relay and arrived with the same SHA-256.
