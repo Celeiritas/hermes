@@ -2,7 +2,7 @@
 <#
 install-sendto.ps1 - the Hermes entries in Explorer's right-click > Send To menu, with the Hermes icon.
   install-sendto.ps1              makes (or refreshes) the five Send To entries
-  install-sendto.ps1 -Desktop     also "Hermes · Magnet" and "Hermes · Collect" on the Desktop
+  install-sendto.ps1 -Desktop     also the Magnet and Collect entries on the Desktop
   install-sendto.ps1 -Remove      moves every entry this script made to %APPDATA%\Hermes\.set-aside-<date>\ (nothing is deleted)
   install-sendto.ps1 -Icon <file.ico>   use another icon
 
@@ -21,16 +21,19 @@ if (-not $SendTo) { $SendTo = Join-Path $env:APPDATA 'Microsoft\Windows\SendTo' 
 $DesktopDir = [Environment]::GetFolderPath('Desktop')
 
 # name -> hermes.ps1 command. Send To appends the selected files after these arguments.
+# The middle dot is built from its code point: Windows PowerShell 5 reads a script without a BOM as ANSI, so a literal
+# non-ASCII character here would turn into two wrong ones in the shortcut names. This file stays pure ASCII.
+$Dot = [string][char]0xB7
 $Entries = [ordered]@{
-    'Hermes · Mail'    = 'send servermail'
-    'Hermes · Torrent' = 'torrent'
-    'Hermes · Magnet'  = 'magnet'
-    'Hermes · Lesson'  = 'send lesson'
-    'Hermes · ROMs'    = 'send roms'
+    "Hermes $Dot Mail"    = 'send servermail'
+    "Hermes $Dot Torrent" = 'torrent'
+    "Hermes $Dot Magnet"  = 'magnet'
+    "Hermes $Dot Lesson"  = 'send lesson'
+    "Hermes $Dot ROMs"    = 'send roms'
 }
 $DesktopEntries = [ordered]@{
-    'Hermes · Magnet'  = 'magnet'
-    'Hermes · Collect' = 'collect'
+    "Hermes $Dot Magnet"  = 'magnet'
+    "Hermes $Dot Collect" = 'collect'
 }
 
 function Get-Icon {
@@ -91,4 +94,4 @@ if ($Desktop) {
     Write-Host "Desktop ($DesktopDir):"
     foreach ($name in $DesktopEntries.Keys) { Set-Shortcut $DesktopDir $name $DesktopEntries[$name] $iconPath }
 }
-Write-Host 'Done. Right-click a file > Send To > Hermes · Mail (or Torrent, Magnet, Lesson, ROMs).' -ForegroundColor Green
+Write-Host "Done. Right-click a file > Send To > Hermes $Dot Mail (or Torrent, Magnet, Lesson, ROMs)." -ForegroundColor Green

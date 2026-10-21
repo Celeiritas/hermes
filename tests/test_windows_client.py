@@ -95,9 +95,12 @@ class ProtocolTest(unittest.TestCase):
                 self.assertEqual(self.arrival(out)[1]["name"], unicodedata.normalize("NFC", name))
 
     def test_the_clients_base64url_is_what_the_server_decodes(self):
-        for name in NAMES + ["??>>.bin", "a+b/c.txt"]:       # names whose base64 holds + and / (turned into - and _)
+        for name in NAMES + ["??>>.bin", "???.bin"]:        # names whose base64 holds + and / (turned into - and _)
             self.assertEqual(receive.clean_name(b64url_like_the_client(name)), unicodedata.normalize("NFC", name))
-        self.assertRegex(b64url_like_the_client("??>>.bin"), r"^[A-Za-z0-9_-]+$")
+        self.assertIn("+", base64.b64encode(b"??>>").decode())
+        self.assertIn("/", base64.b64encode(b"???").decode())
+        for name in ("??>>.bin", "???.bin"):
+            self.assertRegex(b64url_like_the_client(name), r"^[A-Za-z0-9_-]+$")
 
     def test_a_refused_name_is_refused_and_nothing_is_written(self):
         code, out, err = self.put(".hidden.txt", b"x")
@@ -125,10 +128,15 @@ class ScriptTest(unittest.TestCase):
         self.assertIn("Get-FileHash -LiteralPath $item.FullName -Algorithm SHA256", PS1)
         self.assertIn("StandardInput.BaseStream", PS1)
         self.assertIn("-T -o BatchMode=yes -o ConnectTimeout=15", PS1)
-        self.assertNotRegex(PS1, r"\|\s*&?\s*\$?ssh\b", "a PowerShell pipeline into ssh would re-encode the bytes")
-        self.assertNotRegex(PS1, r"\|\s*ssh(\.exe)?\b")
+        code = "\n".join(l for l in PS1.splitlines() if "keys add" not in l)   # the printed keys-add line pipes text, on purpose
+        self.assertNotRegex(code, r"\|\s*&?\s*\$?ssh\b", "a PowerShell pipeline into ssh would re-encode the bytes")
+        self.assertNotRegex(code, r"\|\s*ssh(\.exe)?\b")
         self.assertIn("ConvertTo-Base64Url", PS1)
         self.assertIn("Replace('+', '-').Replace('/', '_')", PS1)
+        # .NET Framework flushes the StandardInput writer's preamble at process start: a UTF-8 console with a BOM
+        # put EF BB BF in front of every file (found in the first end-to-end run). The client must prevent it.
+        self.assertIn("[Console]::InputEncoding = New-Object System.Text.UTF8Encoding $false", PS1)
+        self.assertLess(PS1.index("UTF8Encoding $false"), PS1.index("[System.Diagnostics.Process]::Start($psi)"))
 
     def test_only_ok_id_counts_as_delivered(self):
         self.assertIn("$r.out -match '^ok (\\S+)$'", PS1)
@@ -160,10 +168,17 @@ class ScriptTest(unittest.TestCase):
         self.assertIn("$hash.Substring(0, 8)", PS1)      # <hash8>.magnet, lower case, as send.py names them
         self.assertIn("xt=urn:btih:([A-Za-z0-9]{32,40})", PS1)
 
+    def test_scripts_are_pure_ascii(self):
+        """Windows PowerShell 5 reads a script without a BOM as ANSI: one non-ASCII character would come out as two wrong ones."""
+        for script, text in (("hermes.ps1", PS1), ("install-sendto.ps1", SENDTO)):
+            bad = sorted({c for c in text if ord(c) > 127})
+            self.assertEqual(bad, [], "%s holds non-ASCII characters %r" % (script, bad))
+
     def test_sendto_entries(self):
-        for name, command in [("Hermes · Mail", "send servermail"), ("Hermes · Torrent", "torrent"), ("Hermes · Magnet", "magnet"),
-                              ("Hermes · Lesson", "send lesson"), ("Hermes · ROMs", "send roms"), ("Hermes · Collect", "collect")]:
-            self.assertIn("'%s'" % name, SENDTO)
+        self.assertIn("$Dot = [string][char]0xB7", SENDTO)       # the middle dot, without a non-ASCII byte in the file
+        for name, command in [("Mail", "send servermail"), ("Torrent", "torrent"), ("Magnet", "magnet"),
+                              ("Lesson", "send lesson"), ("ROMs", "send roms"), ("Collect", "collect")]:
+            self.assertIn('"Hermes $Dot %s"' % name, SENDTO)
             self.assertIn("'%s'" % command, SENDTO)
         self.assertIn('-NoProfile -ExecutionPolicy Bypass -File "{0}" -Window {1}', SENDTO)
         self.assertIn("hermes.ico", SENDTO)

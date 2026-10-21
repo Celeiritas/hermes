@@ -107,7 +107,13 @@ function Invoke-Native($exe, $arguments, $inputFile, $label) {
     $psi.RedirectStandardError = $true
     $psi.StandardOutputEncoding = [Text.Encoding]::UTF8
     $psi.StandardErrorEncoding = [Text.Encoding]::UTF8
-    $p = [System.Diagnostics.Process]::Start($psi)
+    # .NET Framework builds the child's StandardInput writer from the console's input encoding and flushes it at once,
+    # so a UTF-8 console with a byte-order mark would put 3 bytes (EF BB BF) in front of the file. A BOM-less UTF-8
+    # while the process starts keeps the stream exactly the file's bytes; the writer itself is never used.
+    $inputEncoding = $null
+    try { $inputEncoding = [Console]::InputEncoding; [Console]::InputEncoding = New-Object System.Text.UTF8Encoding $false } catch {}
+    try { $p = [System.Diagnostics.Process]::Start($psi) }
+    finally { if ($inputEncoding) { try { [Console]::InputEncoding = $inputEncoding } catch {} } }
     $outTask = $p.StandardOutput.ReadToEndAsync()
     $errTask = $p.StandardError.ReadToEndAsync()
     $stdin = $p.StandardInput.BaseStream
@@ -357,12 +363,14 @@ function Setup-Client($cfg) {
     else {
         $nl = "`n"
         if ($text -match "`r`n") { $nl = "`r`n" }
-        $block = @("Host " + $cfg.host, "    HostName " + $cfg.server)
-        if ($cfg.port -ne 22) { $block += "    Port " + $cfg.port }
-        $block += "    User " + $cfg.user
-        $block += "    IdentityFile ~/.ssh/hermes_" + $cfg.device
-        $block += "    IdentitiesOnly yes"
-        $block += "    StrictHostKeyChecking accept-new"
+        $block = New-Object System.Collections.Generic.List[string]
+        $block.Add("Host " + $cfg.host)
+        $block.Add("    HostName " + $cfg.server)
+        if ($cfg.port -ne 22) { $block.Add("    Port " + $cfg.port) }
+        $block.Add("    User " + $cfg.user)
+        $block.Add("    IdentityFile ~/.ssh/hermes_" + $cfg.device)
+        $block.Add("    IdentitiesOnly yes")
+        $block.Add("    StrictHostKeyChecking accept-new")
         if ($text -and -not $text.EndsWith("`n")) { $text += $nl }
         if ($text) { $text += $nl }
         $text += ($block -join $nl) + $nl
