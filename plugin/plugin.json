@@ -1,0 +1,2 @@
+{ "id": "delivery", "kind": "server", "name": "Delivery", "subtitle": "Hermes · deliveries", "version": "0.4.0",
+  "server": "plugin.py", "page": "page.js", "style": "page.css", "order": 30 }

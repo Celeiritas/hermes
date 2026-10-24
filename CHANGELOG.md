@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.4.0 – 2026-10-23
+- **Hermes · Delivery** (`plugin/`, the Elaia server plugin `delivery`, issue #11, docs/design.md §6), laid out for a phone first:
+  - **The status line** ("2 delivered today · 1 quarantined"), also Elaia's Home line; Home's Needs you says "Look at the set-aside one" while the alert is up.
+  - **Send a note:** an open route and one text box (note, link or magnet link), run through `hermes message` with the text on stdin and the tailnet login as `--user`. The verdict shows in place; Argus nods on delivered and winces on set aside (Elaia 4.20). A quarantined note leaves the box (it must not be sent twice); a refused one stays to fix.
+  - **Set aside:** quarantined, held and undelivered items with the reason in plain words; details on demand (sender, route, size, SHA-256) and copy buttons for the `hermes release` and `hermes discard` lines. No Release button: Hermes never releases on his own (issue #27 adds it through Zeus).
+  - **Recent deliveries** from the log, newest first, filters All · Quarantined · Outbox. **Fetchers:** Collect phone mail and each configured, allowlisted fetcher (`hermes-decks`, `hermes-github`, `hermes-jellyfin`), started with `systemctl --user start --no-block`.
+  - **Mark as read** runs `hermes ack`. Two columns from 1200 px. A refresh keeps keyboard focus and never redraws the box you are typing in.
+- Reads go through Hermes's own `log` and `config` code, imported from the installed one-file `hermes` (a zip Python can import), so the page and `hermes status` agree; reads run no subprocess and change nothing, and server paths never reach the page. The plugin never decides.
+- No icon yet: the pill shows Elaia's plain mark until the install (issue #12) copies the theme's Hermes medallion. The road picture waits for the owner's art approval (argus-ui docs/ui-plan.md §13).
+- Tests: `tests/test_delivery_plugin.py` (reads, routes, allowlist, refusals, no shell, no paths) and `tests/delivery/` (the page in Chromium under Elaia against a fake hermes: every check in #11's "done means", plus focus, filters, phone width); CI job `delivery-page`.
+- The minor number is the issue's milestone (v0.4, the page); v0.3 (the fetchers, #8–#10) is still to come, so the page lists only the fetchers routes.json configures.
+
 ## 0.2.2 – 2026-10-21
 - `CLAUDE.md`: pull requests merge themselves when CI is green (`main` requires `tests` and `check-private`; `gh pr merge <n> --auto --merge` right after `gh pr create`); branches always off `main`, never stacked. The same rule as Zeus and Janus
 

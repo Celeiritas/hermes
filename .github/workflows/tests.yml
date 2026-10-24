@@ -15,3 +15,20 @@ jobs:
         run: bash scripts/build.sh && ./dist/hermes --version
       - name: Tests
         run: bash tests/run.sh
+  delivery-page:
+    # The Delivery page in a real browser, under Elaia (argus-ui's test runner), against a fake hermes: tests/delivery/.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/checkout@v5
+        with:
+          repository: Celeiritas/argus-ui
+          path: argus-ui
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+      - name: Playwright and Chromium
+        working-directory: argus-ui
+        run: npm install --no-audit --no-fund && npx playwright install --with-deps chromium
+      - name: The Delivery page
+        run: bash tests/delivery/run.sh argus-ui

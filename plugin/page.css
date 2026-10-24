@@ -1,0 +1,49 @@
+/* Hermes · Delivery. Elaia's tokens (--card, --line, --snow, --powder, --ok, --bad, --s*, --fs-*); sky blue is Hermes's hue.
+   The road art (parcels, gate, shelf, cage, held box, outbox) waits for the owner's approval (argus-ui docs/ui-plan.md §13). */
+.delivery{--wing:#7FB3D5;max-width:880px;display:grid;gap:var(--s6);padding-bottom:var(--s8)}
+.delivery .dcols,.delivery .dcol{display:grid;gap:var(--s6);align-content:start;min-width:0}
+/* wide screens: what you do (send, set aside) on the left, what happened (recent, fetchers) on the right */
+@media (min-width:1200px){.delivery{max-width:1600px}.delivery .dcols{grid-template-columns:minmax(0,1fr) minmax(0,1fr)}}
+.delivery h3{margin:0 0 var(--s3);font-size:var(--fs-h2);font-weight:600;color:var(--snow)}
+.delivery h3 .count{font-size:var(--fs-sec);color:var(--wing)}
+.delivery ul{list-style:none;margin:0;padding:0}
+.delivery p{margin:0}
+.delivery .meta{color:var(--powder);font-size:var(--fs-sec);overflow-wrap:anywhere}
+.delivery .why{color:var(--snow);font-size:var(--fs-sec);overflow-wrap:anywhere}
+.delivery .empty{color:var(--powder);font-size:var(--fs-sec)}
+.delivery .dline{font-size:var(--fs-body);color:var(--snow)}
+.delivery button{min-height:var(--hit);padding:0 var(--s4);font-size:var(--fs-sec)}
+.delivery code{font-size:var(--fs-meta);overflow-wrap:anywhere}
+.delivery .acts{display:flex;flex-wrap:wrap;gap:var(--s2)}
+
+/* the send box */
+.delivery .send{display:grid;gap:var(--s2)}
+.delivery .send label{font-size:var(--fs-sec);color:var(--snow);font-weight:600}
+.delivery .send select,.delivery .send textarea{min-height:var(--hit);font:inherit;font-size:var(--fs-body);color:var(--snow);background:var(--card);border:1px solid var(--line);border-radius:8px;padding:var(--s2) var(--s3);max-width:100%;box-sizing:border-box}
+.delivery .send textarea{resize:vertical;width:100%}
+.delivery .go{border-color:var(--wing);color:var(--snow)}
+
+/* rows: recent deliveries, set-aside items, fetchers */
+.delivery .drow,.delivery .aside,.delivery .frow{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:var(--s3) var(--s4);display:grid;gap:var(--s1);min-width:0}
+.delivery .recent,.delivery .asides,.delivery .fetchers{display:grid;gap:var(--s2)}
+.delivery .drow.bad,.delivery .aside{border-left:3px solid var(--bad)}
+.delivery .dhead{display:flex;flex-wrap:wrap;align-items:baseline;justify-content:space-between;gap:var(--s2)}
+.delivery .dhead b{color:var(--snow);font-weight:600;overflow-wrap:anywhere}
+.delivery .frow{grid-template-columns:minmax(0,1fr) auto;align-items:center;gap:var(--s3)}
+.delivery .frow b{color:var(--snow);font-weight:600}
+@media (max-width:480px){.delivery .frow{grid-template-columns:1fr}}
+.delivery .detail{display:grid;gap:var(--s2);margin-top:var(--s1)}.delivery .detail[hidden]{display:none}
+.delivery .detail dl{display:grid;grid-template-columns:auto minmax(0,1fr);gap:var(--s1) var(--s3);margin:0;font-size:var(--fs-sec)}
+.delivery .detail dt{color:var(--powder)}.delivery .detail dd{margin:0;color:var(--snow);overflow-wrap:anywhere}
+.delivery .cmd{display:flex;flex-wrap:wrap;gap:var(--s2);align-items:center;background:#161a1f;border-radius:8px;padding:var(--s2) var(--s3)}
+.delivery .cmd code{flex:1 1 12em;color:var(--snow)}
+
+/* chips: an icon and a word, so colour is never the only sign */
+.delivery .chip{display:inline-flex;align-items:center;gap:var(--s1);font-size:var(--fs-meta);color:var(--snow);border:1px solid var(--line);border-radius:999px;padding:2px var(--s2);white-space:nowrap;margin-right:var(--s1)}
+.delivery .o-delivered,.delivery .o-sent,.delivery .o-released{border-color:var(--ok)}
+.delivery .o-quarantine,.delivery .o-undelivered,.delivery .o-failed{border-color:var(--bad)}
+.delivery .o-held,.delivery .o-waiting,.delivery .o-outbox{border-color:var(--wing)}
+
+.delivery .filters{display:flex;flex-wrap:wrap;gap:var(--s2);margin-bottom:var(--s3)}
+.delivery .filters [aria-pressed="true"]{border-color:var(--wing);color:var(--snow)}
+.delivery .dalert{display:flex;flex-wrap:wrap;gap:var(--s3);align-items:center;justify-content:space-between;border:1px solid var(--bad);border-radius:12px;padding:var(--s3) var(--s4);color:var(--snow);font-size:var(--fs-sec)}
