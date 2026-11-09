@@ -5,7 +5,9 @@
                                      appends "cp <file> <dev>" to $HERMES_FAKE_DEVICE/sent.log; =offline exits 1 like a
                                      sleeping peer; =hang never returns
     tailscale file get [--conflict=X] <dir>   moves every file waiting in $HERMES_FAKE_TAILDROPS into <dir>, at once
-    tailscale version                prints a version"""
+    tailscale version                prints a version
+    tailscale ip -4                  prints $HERMES_FAKE_TAILNET_IP; without it exits 1, like a machine that is not on
+                                     a tailnet (so `hermes check-config` says nothing about sshd in other tests)"""
 import json
 import os
 import shutil
@@ -46,6 +48,13 @@ if cmd[:2] == ["file", "get"] and len(cmd) >= 3:
     if waiting and os.path.isdir(waiting):
         for name in sorted(os.listdir(waiting)):
             shutil.move(os.path.join(waiting, name), os.path.join(target, name))
+    sys.exit(0)
+if cmd == ["ip", "-4"]:
+    ip = os.environ.get("HERMES_FAKE_TAILNET_IP")
+    if not ip:
+        print("no current Tailscale IPs; state: Stopped", file=sys.stderr)
+        sys.exit(1)
+    print(ip)
     sys.exit(0)
 if cmd == ["version"]:
     print("1.80.0\n  tailscale commit: fake\n  go version: fake")

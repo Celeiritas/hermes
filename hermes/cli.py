@@ -10,8 +10,9 @@ DESCRIPTION = "Hermes carries files and short messages between the devices of on
 
 
 def check_config(args):
-    """hermes check-config: one sentence per route, then the warnings and errors; exit 1 on errors."""
-    cfg = config.check(args.config)
+    """hermes check-config: one sentence per route, then the warnings and errors; exit 1 on errors. It also warns when
+    sshd is not listening on this machine's tailnet address, since then no device can reach the door."""
+    cfg = config.check_door(config.check(args.config))
     for line in cfg.explain():
         print(line)
     for w in cfg.warnings:
