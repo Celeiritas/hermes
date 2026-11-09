@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.4.2 – 2026-11-09
+- **The Windows client never assumes port 22** (issue #24). `sshd` on {{SERVER}} may listen on any port, on the server's Tailscale address only. `hermes.ps1 setup` now takes `HostName` and `Port` for `Host hermes-{{SERVER}}` from the ssh alias you already use for the server: `-Alias {{SSH}}`, or the `Host` block that is called like the server (or whose `HostName` is the server). `-Port` wins over the alias; with neither, setup asks; with no answer it writes no `Port` line and ssh uses its own default. An `-Alias` that is not in the ssh config stops setup before anything is changed. Only plain `Host` blocks are read (no patterns, `Match` or `Include`).
+- The printed `hermes keys add` line goes through the same alias (otherwise `ssh -p <port> <user>@<server>`), so the key is installed through the door that works. `%APPDATA%\Hermes\config.json` gains `alias`, and its `port` is `0` when nobody named one (it was `22`; no send ever read it).
+- A `Host hermes-{{SERVER}}` block that is already there is still kept unchanged; setup now says what it holds, and says so when the alias or `-Port` names another port.
+- **`hermes check-config` warns when `sshd` is not listening on the server's Tailscale address** (`tailscale ip -4` against `ss -tlnp`), because no device could reach the door. It stays silent when it cannot tell (no `tailscale`, no `ss`, not on a tailnet), and it counts a listener whose process `ss` does not show as sshd, since `ss` names only the caller's own processes. Only `check-config` asks; `receive` and `door` start neither tool.
+- Docs: `docs/windows-client.md` (the alias; `-Port` and `-User` matter to `setup` only, which the page said wrongly before; manual checklist item 14), `docs/keys.md` (the `from=` restriction is unchanged), `docs/design.md`.
+- Tests: `SetupTest` runs `hermes.ps1 setup` for real in a temporary home folder (Windows PowerShell 5 on a PC, `pwsh` in CI): port and address copied from the alias, the alias found by the server's name, `-Port` wins, the question, no `Port` line when nobody answers, patterns ignored, a missing alias changes nothing, an existing block kept. `tests/test_config.py` covers the sshd warning with a fake `ss`.
+- CI runs on `ubuntu-24.04`, pinned: `ubuntu-latest` moved to a release on which the Delivery page's browser cannot be installed.
+
 ## 0.4.0 – 2026-10-23
 - **Hermes · Delivery** (`plugin/`, the Elaia server plugin `delivery`, issue #11, docs/design.md §6), laid out for a phone first:
   - **The status line** ("2 delivered today · 1 quarantined"), also Elaia's Home line; Home's Needs you says "Look at the set-aside one" while the alert is up.

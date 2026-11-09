@@ -25,10 +25,12 @@ Every device that sends files to {{SERVER}} has its own Hermes-only ssh key. On 
    ```
    Host hermes-{{SERVER}}
        HostName {{SERVER}}
+       Port <the port in your {{SSH}} alias>
        User <your user on {{SERVER}}>
        IdentityFile ~/.ssh/hermes_{{PC}}
        IdentitiesOnly yes
    ```
+   The port and the address come from the alias you already use for the server (`{{SSH}}`): `sshd` may listen on any port, and on the server's Tailscale address only, so nothing here assumes the default. Leave the `Port` line out when your alias has none. On Windows, `hermes.ps1 setup -Alias {{SSH}}` copies both. The `from=` restriction in `authorized_keys` is unchanged: it names Tailscale's ranges, not a port. On {{SERVER}}, `hermes check-config` warns when `sshd` is not listening on the server's Tailscale address (`tailscale ip -4` against the listening sockets in `ss -tlnp`), because no device could then reach the door.
 4. **Try it:** `ssh hermes-{{SERVER}} ping` answers `hermes ok <version>`.
 
 `hermes keys list` shows each device, its key type and fingerprint, and whether its line is still exactly what Hermes writes. `hermes keys remove {{PC}}` takes a device's line out (backup first). Adding a device that already has a line replaces it, which is how a key is rotated.
