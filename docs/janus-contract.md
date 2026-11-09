@@ -1,6 +1,6 @@
 # The Janus contract, Hermes's side
 
-Janus checks every delivery at {{SERVER}}'s door. Hermes never decides whether a file is allowed; it asks Janus and acts on the answer. Janus's own design confirms this contract; until a real `janus` exists, arrivals wait in `held/` and the tests use `tests/fixtures/janus`.
+Janus checks every delivery at {{SERVER}}'s door. Hermes never decides whether a file is allowed; it asks Janus and acts on the answer. Janus is its own project and its design confirms this contract; on a machine with no `janus` on `PATH`, arrivals wait in `held/`. The tests use `tests/fixtures/janus`, a stand-in that keeps to this contract.
 
 ## The call
 ```
@@ -20,15 +20,19 @@ janus check --json <stage>/in/<id>
 
 stdout is one JSON object:
 ```json
-{ "verdict": "pass", "reasons": [], "sha256": "…", "janus": "0.1.0",
-  "checks": { "route": "ok", "kind": "ok", "shape": "ok", "integrity": "ok" } }
+{ "verdict": "pass", "janus": "0.2.2", "sha256": "…", "kind": "archive",
+  "checks": { "route": "ok", "kind": "ok", "shape": "ok", "integrity": "ok" },
+  "reasons": [], "notes": ["archive contents unchecked (.7z)"], "ms": 212 }
 ```
-- `verdict` must match the exit code; `reasons` must be a list. Anything else is "no verdict" and the arrival is held.
-- `reasons` are plain sentences; the Delivery page shows them as they are (e.g. `.exe files are never allowed on any route.`), and the first one is the alert's message.
+- `verdict` must match the exit code; `reasons` must be a list. Anything else is "no verdict" and the arrival is held. These two are the only fields that can hold an arrival.
+- `reasons` are plain sentences; the Delivery page shows them as they are (e.g. `.exe files are never allowed on any route.`). Janus runs every check even after one has failed, so one verdict may give **several** reasons. Hermes keeps all of them, in Janus's order: in `verdict.json`, in the log line, in `hermes log` and `hermes status`, and on the page (one line each). The alert's message is the first one, followed by "(and 2 more reasons)" when there are more.
+- `notes` are remarks that change nothing about the verdict (plain sentences, too). Today Janus writes them for an archive it cannot look inside (`archive contents unchecked (.7z)`), for archives inside an archive (`nested archives: 3 (not opened)`) and for a tree (`tree: 3 files (image and document)`). A delivery that passes with a note is delivered like any other; the note goes into the log line, `hermes log` shows it as `⚠ note: …`, and the Delivery page shows a ⚠ chip with the words "Note: …" next to the item, delivered or set aside. Notes never raise the alert.
+- `kind` is the kind Janus detected (`image`, `archive`, `document`, `tree` …), or `null` when it named none. It goes into the log line and onto the page.
 - `sha256` is what Janus hashed (Hermes compares nothing with it in v0.1; it is recorded).
-- `checks` is for the page and the log; Hermes doesn't act on single checks.
+- `checks` and `ms` (how long the check took) are kept in `verdict.json`; Hermes doesn't act on them.
+- **An older Janus is fine.** A verdict without `notes` or `kind` is read as no notes and no kind, and so is a `verdict.json` or a log line saved before Hermes 0.4.1. A `notes` that is not a list of sentences, or a `kind` that is not a word, is left out of the log line and the page; it never holds a delivery (`verdict.json` still has it as Janus sent it).
 
-Hermes saves the answer as `verdict.json` inside the arrival **before** moving anything, so a door run that dies halfway never asks Janus twice about the same arrival, and never delivers a file twice.
+Hermes saves the answer as `verdict.json` inside the arrival, exactly as Janus gave it, **before** moving anything, so a door run that dies halfway never asks Janus twice about the same arrival, and never delivers a file twice.
 
 ## What Janus needs from Hermes
 `meta.json` (`docs/files.md`): `route`, `name`, `bytes`, `sha256`, and `sender` with `via` (`ssh`, `taildrop`, `fetch`), `key` (the device whose key was used), `node` and `user` from `tailscale whois` (`null` when whois failed: Janus decides what that means), `ip`. Janus checks that `key` and `node` name the same device, that the sender may use the route, and that the file is an allowed kind and size for it. Who may send what is Janus's `~/.config/janus/routes.json`; Hermes only warns (`hermes check-config`) about routes that file doesn't mention, since every arrival on them would be quarantined.

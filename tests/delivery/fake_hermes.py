@@ -22,7 +22,7 @@ if args[:1] == ["message"]:
     with open(log, "a", encoding="utf-8") as f:
         f.write(json.dumps({"t": now, "id": "m-" + name, "route": args[1], "dir": "in", "from": "local", "to": None if bad else "~/mail/" + name,
                             "name": name, "bytes": len(text.encode()), "outcome": "quarantined" if bad else "delivered",
-                            "reasons": ["the fake Janus does not like it"] if bad else []}) + "\n")
+                            "reasons": ["the fake Janus does not like it"] if bad else [], "kind": "document", "notes": []}) + "\n")
     print("%s: %s" % (name, "quarantined: the fake Janus does not like it" if bad else "delivered"))
     sys.exit(1 if bad else 0)
 elif args[:1] == ["ack"]:

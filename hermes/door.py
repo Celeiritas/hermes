@@ -8,7 +8,9 @@ as hermes receive leaves it) the door asks `janus check --json` and acts on the 
     quarantine -> <stage>/quarantine/<id>/ (data mode 0400, meta.json, verdict.json)   duplicate -> <stage>/skipped/<id>/
     Janus missing, failed, timed out, or an answer that doesn't match its exit code -> <stage>/held/<id>/ (held.txt),
                   retried on every run and by hermes retry; nothing is ever delivered without a pass
-Every arrival leaves in/, so the path unit never loops into systemd's trigger limit. One log line per outcome. The door
+Every arrival leaves in/, so the path unit never loops into systemd's trigger limit. One log line per outcome; it
+keeps the verdict's reasons (all of them: Janus runs every check), the kind Janus detected and his notes (remarks
+that change nothing, such as "archive contents unchecked (.7z)"); a Janus from before those is fine. The door
 exits non-zero only when Hermes itself fails (config, disk); a quarantine is Janus doing his job. A run interrupted
 halfway is finished by the next one: verdict.json is written into the arrival before anything moves, so a verdict is
 never asked twice and a file is never delivered twice. Nothing is deleted: only renames into the set-aside folders or
@@ -86,8 +88,16 @@ def ask_janus(arrival, nbytes, env):
 
 
 def hermes_verdict(meta, reason):
-    return {"verdict": "quarantine", "reasons": [reason], "sha256": meta.get("sha256"), "janus": None,
-            "checks": {"route": "ok", "kind": "ok", "shape": "fail", "integrity": "ok"}, "hermes": version()}
+    return {"verdict": "quarantine", "reasons": [reason], "sha256": meta.get("sha256"), "janus": None, "kind": None,
+            "checks": {"route": "ok", "kind": "ok", "shape": "fail", "integrity": "ok"}, "notes": [], "hermes": version()}
+
+
+def judged(doc, **more):
+    """What a log line keeps of a verdict: the verdict, every reason, the kind Janus detected and his notes. A Janus
+    from before `kind` and `notes` (or a verdict one of those saved) gives None and []. Only `verdict` and `reasons`
+    can hold an arrival (ask_janus); a kind or notes that are not what the contract says are left out, never fatal."""
+    return {"verdict": doc.get("verdict"), "reasons": log.strings(doc.get("reasons")), "kind": log.kind(doc.get("kind")),
+            "notes": log.strings(doc.get("notes")), **more}
 
 
 # ---------- where a pass goes ----------
@@ -232,7 +242,7 @@ def deliver_out(stage, arrival, meta, route, doc, env, out, outcome="sent", **mo
         if staged.exists():
             os.remove(staged)                                # Hermes's own link, after Tailscale confirmed the send
         if not log.seen(meta.get("id"), outcome):
-            log.write(entry(meta, outcome, to=where, name=name, verdict=doc.get("verdict"), reasons=doc.get("reasons") or [], **more))
+            log.write(entry(meta, outcome, to=where, name=name, **judged(doc), **more))
         move(arrival, stage / "delivered" / arrival.name)
         return outcome
     note(arrival, "tries.txt", why)
@@ -241,12 +251,12 @@ def deliver_out(stage, arrival, meta, route, doc, env, out, outcome="sent", **mo
     if (datetime.now().astimezone() - since).total_seconds() > hours * 3600:
         note(arrival, "tries.txt", "%s was unreachable for %g hours." % (route.device, hours))
         move(arrival, stage / "undelivered" / arrival.name)
-        log.write(entry(meta, "undelivered", to=where, name=name, verdict=doc.get("verdict"),
-                        reasons=[why, "%s was unreachable for %g hours." % (route.device, hours)]))
+        log.write(entry(meta, "undelivered", to=where, name=name,
+                        **judged(doc, reasons=[why, "%s was unreachable for %g hours." % (route.device, hours)])))
         return "undelivered"
     if arrival.parent.name != "outbox":
         move(arrival, stage / "outbox" / arrival.name)
-        log.write(entry(meta, "waiting", to=where, name=name, verdict=doc.get("verdict"), reasons=[why]))
+        log.write(entry(meta, "waiting", to=where, name=name, **judged(doc, reasons=[why])))
     return "waiting"
 
 
@@ -274,7 +284,7 @@ def entry(meta, outcome, **more):
     sender = meta.get("sender") or {}
     return {"id": meta.get("id"), "route": meta.get("route"), "dir": meta.get("direction", "in"),
             "from": sender.get("key") or sender.get("fetch") or sender.get("via"), "to": None, "name": meta.get("name"),
-            "bytes": meta.get("bytes"), "verdict": None, "outcome": outcome, "reasons": [], **more}
+            "bytes": meta.get("bytes"), "verdict": None, "outcome": outcome, "reasons": [], "kind": None, "notes": [], **more}
 
 
 def deliver(cfg, stage, arrival, meta, route, doc, env, out, outcome="delivered", **more):
@@ -289,8 +299,8 @@ def deliver(cfg, stage, arrival, meta, route, doc, env, out, outcome="delivered"
         if final.exists() or final.is_symlink():
             if route.conflict == "skip":
                 move(arrival, stage / "skipped" / arrival.name)
-                log.write(entry(meta, "skipped", to=config.short(final), verdict=doc.get("verdict"),
-                                reasons=["A file of that name is already there; the route skips it."]))
+                log.write(entry(meta, "skipped", to=config.short(final),
+                                **judged(doc, reasons=["A file of that name is already there; the route skips it."])))
                 return "skipped"
             if route.conflict == "rename":
                 final = free_name(folder, name)
@@ -304,7 +314,7 @@ def deliver(cfg, stage, arrival, meta, route, doc, env, out, outcome="delivered"
     else:
         final = folder / name                                # the data moved in an interrupted run
     if not log.seen(meta.get("id"), outcome):
-        log.write(entry(meta, outcome, to=config.short(final), verdict=doc.get("verdict"), reasons=doc.get("reasons") or [], **more))
+        log.write(entry(meta, outcome, to=config.short(final), **judged(doc), **more))
     move(arrival, stage / "delivered" / arrival.name)
     return outcome
 
@@ -318,7 +328,8 @@ def process(cfg, stage, arrival, env, out):
         note(arrival, "error.txt", "no readable meta.json; not an arrival Hermes made")
         move(arrival, stage / "failed" / aid)
         log.write({"id": aid, "route": None, "dir": "in", "from": None, "to": None, "name": None, "bytes": None,
-                   "verdict": None, "outcome": "failed", "reasons": ["The arrival has no readable meta.json."]})
+                   "verdict": None, "outcome": "failed", "reasons": ["The arrival has no readable meta.json."],
+                   "kind": None, "notes": []})
         return "failed"
     route = cfg.routes.get(meta["route"])
     doc = log.read_json(arrival / "verdict.json")
@@ -354,10 +365,10 @@ def process(cfg, stage, arrival, env, out):
         if (arrival / "data").exists() and meta.get("direction") != "out":   # an outbound data is a hardlink to the original
             os.chmod(arrival / "data", 0o400)
         move(arrival, stage / "quarantine" / aid)
-        log.write(entry(meta, "quarantined", verdict=verdict, reasons=doc.get("reasons") or []))
+        log.write(entry(meta, "quarantined", **judged(doc)))
         return "quarantined"
     move(arrival, stage / "skipped" / aid)
-    log.write(entry(meta, "skipped", verdict=verdict, reasons=doc.get("reasons") or []))
+    log.write(entry(meta, "skipped", **judged(doc)))
     return "skipped"
 
 

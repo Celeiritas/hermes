@@ -45,18 +45,30 @@ def lib():
     return _lib
 
 
-def _meta(item):
+def _read(item, name):
+    """One of a set-aside arrival's own JSON files (meta.json, verdict.json), or {} when it cannot be read."""
     try:
-        doc = json.loads((Path(item["path"]) / "meta.json").read_text(encoding="utf-8"))
+        doc = json.loads((Path(item["path"]) / name).read_text(encoding="utf-8"))
         return doc if isinstance(doc, dict) else {}
     except (OSError, ValueError, KeyError, TypeError):
         return {}
 
 
+def _judged(src):
+    """What Janus adds to a verdict (issue #25): the kind he detected, or None, and his notes, or []. Worked out here
+    and not by hermes.log, because the installed hermes may be older than this plugin, and so may a log line or a
+    verdict.json. Anything that is not what the contract says is left out, so the page never has to guess."""
+    kind, notes = src.get("kind"), src.get("notes")
+    return {"kind": kind if isinstance(kind, str) and kind.strip() else None,
+            "notes": [s for s in notes if isinstance(s, str) and s.strip()] if isinstance(notes, list) else []}
+
+
 def _waiting(item):
-    """One set-aside item for the page: no server paths, plus the SHA-256 from its meta.json."""
+    """One set-aside item for the page: no server paths, plus the SHA-256 from its meta.json and the kind and the
+    notes from its verdict.json."""
     out = {k: item.get(k) for k in ("id", "stage", "folder", "route", "name", "bytes", "from", "since", "reasons")}
-    out["sha256"] = _meta(item).get("sha256")
+    out["sha256"] = _read(item, "meta.json").get("sha256")
+    out.update(_judged(_read(item, "verdict.json")))
     return out
 
 
@@ -98,7 +110,7 @@ def snapshot():
     recent = list(reversed(log.entries(limit=RECENT, last_files=2)))
     keep = ("t", "id", "route", "dir", "from", "to", "name", "bytes", "outcome", "reasons")
     return {"ok": True, "hermes": st.get("hermes"), "at": st.get("at"), "line": log.summary(st), "today": st.get("today"),
-            "recent": [{k: e.get(k) for k in keep} for e in recent],
+            "recent": [{**{k: e.get(k) for k in keep}, **_judged(e)} for e in recent],
             **{f: [_waiting(i) for i in st.get(f) or []] for f in ("quarantine", "held", "undelivered", "outbox", "failed")},
             "routes": _routes(config, cfg), "fetchers": _fetchers(cfg, recent),
             "alert": ({"message": str(st["alert"].get("message") or "")[:300], "since": st["alert"].get("since")} if st.get("alert") else None)}

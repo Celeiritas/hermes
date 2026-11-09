@@ -81,14 +81,29 @@ def size(n):
         n /= 1024.0
 
 
+def strings(value):
+    """The sentences in a verdict's or a log line's `reasons` or `notes`: a list of non-empty strings, whatever was
+    there (an older Janus and an older log line have no `notes` at all)."""
+    return [s for s in value if isinstance(s, str) and s.strip()] if isinstance(value, list) else []
+
+
+def kind(value):
+    """The kind Janus detected (image, archive, tree ...), or None when it named none."""
+    return value if isinstance(value, str) and value.strip() else None
+
+
+def remarks(e):
+    """How a line for people ends: (every reason), then ⚠ note: Janus's notes. Empty when there are neither."""
+    reasons, notes = strings(e.get("reasons")), strings(e.get("notes"))
+    return ("  (" + " ".join(reasons) + ")" if reasons else "") + ("  ⚠ note: " + "; ".join(notes) if notes else "")
+
+
 def line(e):
-    """One log entry for people: time, route, from → to, name, size, outcome and the reasons."""
+    """One log entry for people: time, route, from → to, name, size, outcome, the reasons and the notes."""
     where = e.get("to") or ""
-    s = "%s  %-14s %s → %s  %s  %s  %s" % (e.get("t", "")[:16].replace("T", " "), e.get("route") or "?",
-                                           e.get("from") or "?", where, e.get("name") or "", size(e.get("bytes")), e.get("outcome"))
-    if e.get("reasons"):
-        s += "  (" + " ".join(e["reasons"]) + ")"
-    return s
+    return "%s  %-14s %s → %s  %s  %s  %s" % (e.get("t", "")[:16].replace("T", " "), e.get("route") or "?",
+                                              e.get("from") or "?", where, e.get("name") or "", size(e.get("bytes")),
+                                              e.get("outcome")) + remarks(e)
 
 
 # ---------- status ----------
@@ -100,7 +115,8 @@ def read_json(path):
 
 
 def items(cfg, folder):
-    """What waits in <stage>/<folder>/ across the stages: id, route, name, bytes, since and the reasons."""
+    """What waits in <stage>/<folder>/ across the stages: id, route, name, bytes, since, the reasons, and the kind
+    and notes of Janus's verdict when it has them."""
     out = []
     for stage_name, stage in cfg.stages.items():
         d = stage / folder
@@ -111,7 +127,7 @@ def items(cfg, folder):
                 continue
             meta = read_json(p / "meta.json") or {}
             verdict = read_json(p / "verdict.json") or {}
-            reasons = list(verdict.get("reasons") or [])
+            reasons = strings(verdict.get("reasons"))
             note = {"held": "held.txt", "failed": "error.txt", "outbox": "tries.txt", "undelivered": "tries.txt"}.get(folder)
             if note and (p / note).is_file():         # the last note, without its time stamp
                 lines = [STAMP.sub("", l) for l in (p / note).read_text(encoding="utf-8").splitlines() if l.strip()]
@@ -120,7 +136,8 @@ def items(cfg, folder):
                         "name": meta.get("name"), "bytes": meta.get("bytes"),
                         "from": (meta.get("sender") or {}).get("key") or (meta.get("sender") or {}).get("via"),
                         "since": meta.get("received") or datetime.fromtimestamp(p.stat().st_mtime).astimezone().isoformat(timespec="seconds"),
-                        "reasons": reasons, "path": str(p)})
+                        "reasons": reasons, "notes": strings(verdict.get("notes")), "kind": kind(verdict.get("kind")),
+                        "path": str(p)})
     return out
 
 
@@ -175,8 +192,12 @@ def update_alert(cfg):
     for folder, fallback in (("quarantine", "see the Delivery page"), ("held", "Janus did not answer"), ("undelivered", "the device stayed asleep")):
         these = [i for i in unseen if i["folder"] == folder]
         if these:
-            parts.append("%d deliver%s %s: %s" % (len(these), "y" if len(these) == 1 else "ies", WORDS[folder],
-                                                  these[0]["reasons"][-1] if these[0]["reasons"] else fallback))
+            why = these[0]["reasons"]
+            if folder == "quarantine" and len(why) > 1:      # Janus runs every check: its first reason, and how many more
+                say = "%s (and %d more reason%s)" % (why[0], len(why) - 1, "" if len(why) == 2 else "s")
+            else:                                            # held, undelivered: the last note line says where it stands
+                say = why[-1] if why else fallback
+            parts.append("%d deliver%s %s: %s" % (len(these), "y" if len(these) == 1 else "ies", WORDS[folder], say))
     alert = {"job": "hermes-door", "level": "alert", "since": min(i["since"] for i in unseen), "message": "; ".join(parts), "link": "delivery"}
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(alert) + "\n", encoding="utf-8")
