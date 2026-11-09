@@ -1,4 +1,6 @@
 # Build the zipapp and run the tests on every pull request (and on main), with nothing but Python 3 installed.
+# The runner is pinned: ubuntu-latest moved to a release that Playwright cannot install Chromium on (2026-11-09),
+# and a moving image should not be what turns a pull request red. Raise the number on purpose.
 name: tests
 on:
   pull_request:
@@ -8,7 +10,7 @@ permissions:
   contents: read
 jobs:
   tests:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v5
       - name: Build and run the zipapp
@@ -17,7 +19,7 @@ jobs:
         run: bash tests/run.sh
   delivery-page:
     # The Delivery page in a real browser, under Elaia (argus-ui's test runner), against a fake hermes: tests/delivery/.
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v5
       - uses: actions/checkout@v5
