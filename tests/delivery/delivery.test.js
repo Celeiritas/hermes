@@ -83,7 +83,8 @@ run(async b => {
   await p.locator('#d-route').selectOption('servermail');
   await p.locator('#d-text').fill('buy olive oil');
   await p.locator('.send .go').click();
-  await p.locator('#dstatus', {hasText: 'delivered'}).waitFor({timeout: 5000});
+  // wait for the verdict itself: the status line says "delivered today" all along, so waiting for that word waits for nothing
+  await p.locator('#dstatus', {hasText: /note-.*: delivered/}).waitFor({timeout: 5000});
   const sent = calls().find(c => c.args[0] === 'message');
   check(sent && sent.args.join(' ') === 'message servermail' && sent.stdin === 'buy olive oil', `Send note runs hermes message on that route with the text on stdin (${JSON.stringify(sent)})`);
   check(/note-.*: delivered/.test(await p.locator('#dstatus').textContent()) && await p.locator('#d-text').inputValue() === '', 'the verdict shows in place and the box is cleared');
