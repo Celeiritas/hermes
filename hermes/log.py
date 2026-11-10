@@ -84,7 +84,11 @@ def size(n):
 def strings(value):
     """The sentences in a verdict's or a log line's `reasons` or `notes`: a list of non-empty strings, whatever was
     there (an older Janus and an older log line have no `notes` at all)."""
-    return [s for s in value if isinstance(s, str) and s.strip()] if isinstance(value, list) else []
+    if not isinstance(value, list):
+        return []
+    # Janus's words reach the terminal raw: a run of control characters (an escape sequence, a newline) becomes one space.
+    cleaned = (re.sub(r"[\x00-\x1f\x7f]+", " ", s).strip() for s in value if isinstance(s, str))
+    return [s for s in cleaned if s]
 
 
 def kind(value):

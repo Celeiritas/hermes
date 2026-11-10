@@ -233,6 +233,14 @@ class DoorTest(unittest.TestCase):
         self.assertEqual((e["outcome"], e["kind"], e["notes"]), ("delivered", None, []))
         self.assertEqual(self.listing("held"), [])
 
+    def test_control_characters_in_notes_and_reasons_never_reach_the_terminal(self):
+        e = {"reasons": ["bad\x1b[31m red\nsecond line", "\x1b\x07\r\n"], "notes": ["note\x1b[2J\nspoof", "\x00\x1f\x7f"]}
+        self.assertEqual(log.strings(e["notes"]), ["note [2J spoof"])
+        self.assertEqual(log.strings(e["reasons"]), ["bad [31m red second line"])
+        text = log.remarks(e)
+        self.assertNotRegex(text, r"[\x00-\x1f\x7f]")
+        self.assertIn("note [2J spoof", text)
+
     def assertHeld(self, aid, fragment, **env):
         code, out, err = self.run_door(**env)
         self.assertEqual((code, err), (0, ""), err)
