@@ -62,12 +62,12 @@ class DeliveryPluginTest(unittest.TestCase):
             for e in entries:
                 f.write(json.dumps(e) + "\n")
 
-    def quarantine(self, aid="20261023-101500-abcd", reasons=("an executable (.exe) is never delivered",)):
+    def quarantine(self, aid="20261023-101500-abcd", reasons=("an executable (.exe) is never delivered",), **more):
         d = self.stage / "quarantine" / aid
         d.mkdir(parents=True)
         (d / "meta.json").write_text(json.dumps({"id": aid, "route": "servermail", "name": "setup.exe", "bytes": 2048, "sha256": SHA,
                                                  "sender": {"key": "{{PHONE}}", "via": "ssh"}, "received": "2026-10-23T10:15:00+00:00"}))
-        (d / "verdict.json").write_text(json.dumps({"verdict": "quarantine", "reasons": list(reasons)}))
+        (d / "verdict.json").write_text(json.dumps({"verdict": "quarantine", "reasons": list(reasons), **more}))
         return d
 
     # --- reads ---
@@ -85,6 +85,27 @@ class DeliveryPluginTest(unittest.TestCase):
         self.assertNotIn(str(q), json.dumps(s), "the arrival's path on the server stays on the server")
         self.assertIn("1 delivered today", s["line"])
         self.assertIn("1 quarantined", s["line"])
+
+    def test_the_snapshot_carries_what_janus_added_and_reads_older_lines_and_verdicts(self):
+        from hermes import log
+        line = {"route": "servermail", "dir": "in", "from": "{{PHONE}}", "bytes": 900, "outcome": "delivered", "reasons": []}
+        self.log({**line, "t": log.now(), "id": "n1", "to": "~/mail/photos.7z", "name": "photos.7z", "kind": "archive",
+                  "notes": ["archive contents unchecked (.7z)"]},
+                 {**line, "t": log.now(), "id": "n2", "to": "~/mail/old.txt", "name": "old.txt"},                # before 0.4.1
+                 {**line, "t": log.now(), "id": "n3", "to": "~/mail/odd.txt", "name": "odd.txt", "kind": 7, "notes": "not a list"})
+        three = ("The file is 11 bytes, not the 999 the sender declared.", "The file's SHA-256 does not match what the sender declared.",
+                 ".exe files are never allowed on any route.")
+        self.quarantine("20261023-101500-0001")                                                                   # an older verdict
+        self.quarantine("20261023-101600-0002", reasons=three, kind="archive", notes=["nested archives: 3 (not opened)"])
+        code, s = self.p.get("", {}, Ctx())
+        self.assertEqual(code, 200)
+        recent = {e["id"]: e for e in s["recent"]}
+        self.assertEqual((recent["n1"]["kind"], recent["n1"]["notes"]), ("archive", ["archive contents unchecked (.7z)"]))
+        self.assertEqual((recent["n2"]["kind"], recent["n2"]["notes"]), (None, []))
+        self.assertEqual((recent["n3"]["kind"], recent["n3"]["notes"]), (None, []))
+        old, new = s["quarantine"]
+        self.assertEqual((old["reasons"], old["kind"], old["notes"]), (["an executable (.exe) is never delivered"], None, []))
+        self.assertEqual((new["reasons"], new["kind"], new["notes"]), (list(three), "archive", ["nested archives: 3 (not opened)"]))
 
     def test_the_send_box_offers_only_open_routes(self):
         routes = {r["id"]: r["to"] for r in self.p.get("", {}, Ctx())[1]["routes"]}

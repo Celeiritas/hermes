@@ -51,7 +51,7 @@ def show_status(args):
         for folder in log.LISTED:
             for i in st[folder]:
                 print("  %s  %s  %s  %s  %s%s" % (folder, i["id"], i["route"] or "?", i["name"] or "", log.size(i["bytes"]),
-                                                  "  (" + " ".join(i["reasons"]) + ")" if i["reasons"] else ""))
+                                                  log.remarks(i)))
     return 0
 
 

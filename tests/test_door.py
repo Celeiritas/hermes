@@ -45,7 +45,7 @@ class DoorTest(unittest.TestCase):
         patch = mock.patch.dict(os.environ, self.env)
         patch.start()
         self.addCleanup(patch.stop)
-        for var in ("HERMES_FAKE_JANUS", "HERMES_JANUS_TIMEOUT"):
+        for var in ("HERMES_FAKE_JANUS", "HERMES_FAKE_JANUS_OLD", "HERMES_FAKE_JANUS_NOTES", "HERMES_JANUS_TIMEOUT"):
             os.environ.pop(var, None)
         self.n = 0
 
@@ -135,6 +135,111 @@ class DoorTest(unittest.TestCase):
         self.assertEqual(self.log_entries()[-1]["outcome"], "skipped")
         self.assertEqual(list(self.inbox.iterdir()), [])
         self.assertIsNone(self.alert())
+
+    # --- what Janus adds to a verdict: the kind, notes, several reasons (issue #25) ---
+    def test_a_note_is_kept_in_the_verdict_and_the_log_and_never_changes_the_outcome(self):
+        aid = self.arrival("servermail", "photos.7z")
+        code, out, err = self.run_door()
+        self.assertEqual((code, err), (0, ""), err)
+        self.assertIn("1 delivered", out)
+        self.assertTrue((self.mail / "photos.7z").exists())
+        saved = json.loads((self.stage / "delivered" / aid / "verdict.json").read_text())
+        self.assertEqual((saved["kind"], saved["notes"]), ("archive", ["archive contents unchecked (.7z)"]))
+        self.assertIn("ms", saved)                               # the verdict is kept as Janus gave it
+        e = self.log_entries()[-1]
+        self.assertEqual((e["outcome"], e["verdict"], e["reasons"]), ("delivered", "pass", []))
+        self.assertEqual((e["kind"], e["notes"]), ("archive", ["archive contents unchecked (.7z)"]))
+        self.assertRegex(log.line(e), r"  photos\.7z  11 B  delivered  ⚠ note: archive contents unchecked \(\.7z\)$")
+        self.assertIsNone(self.alert())                          # a note is a remark, not something set aside
+
+    def test_several_notes(self):
+        self.arrival("servermail", "bundle.zip")
+        self.run_door(HERMES_FAKE_JANUS_NOTES=json.dumps(["nested archives: 3 (not opened)", "archive contents unchecked (.7z)"]))
+        e = self.log_entries()[-1]
+        self.assertEqual(e["notes"], ["nested archives: 3 (not opened)", "archive contents unchecked (.7z)"])
+        self.assertTrue(log.line(e).endswith("delivered  ⚠ note: nested archives: 3 (not opened); archive contents unchecked (.7z)"))
+
+    def test_every_reason_is_kept_and_shown(self):
+        three = ["The file is 11 bytes, not the 999 the sender declared.",
+                 "The file's SHA-256 does not match what the sender declared.",
+                 ".exe files are never allowed on any route."]
+        aid = self.arrival("lesson", "setup.exe", bytes=999, sha256="0" * 64)
+        code, out, err = self.run_door()
+        self.assertEqual((code, err), (0, ""), err)
+        self.assertEqual(self.listing("quarantine"), [aid])
+        self.assertEqual(json.loads((self.stage / "quarantine" / aid / "verdict.json").read_text())["reasons"], three)
+        e = self.log_entries()[-1]
+        self.assertEqual((e["outcome"], e["verdict"], e["reasons"], e["kind"], e["notes"]), ("quarantined", "quarantine", three, None, []))
+        self.assertTrue(log.line(e).endswith("quarantined  (%s)" % " ".join(three)))
+        from hermes import config
+        item = log.status(config.load())["quarantine"][0]
+        self.assertEqual((item["reasons"], item["notes"], item["kind"]), (three, [], None))
+        self.assertEqual(self.alert()["message"], "1 delivery quarantined: %s (and 2 more reasons)" % three[0])
+
+    def test_a_quarantined_item_keeps_its_notes_too(self):
+        aid = self.arrival("lesson", "tools.7z", sha256="0" * 64)
+        self.run_door()
+        self.assertEqual(self.listing("quarantine"), [aid])
+        e = self.log_entries()[-1]
+        self.assertEqual((e["kind"], e["notes"]), ("archive", ["archive contents unchecked (.7z)"]))
+        self.assertTrue(log.line(e).endswith("quarantined  (The file's SHA-256 does not match what the sender declared.)"
+                                             "  ⚠ note: archive contents unchecked (.7z)"))
+        from hermes import config
+        item = log.status(config.load())["quarantine"][0]
+        self.assertEqual((item["kind"], item["notes"]), ("archive", ["archive contents unchecked (.7z)"]))
+        self.assertEqual(self.alert()["message"], "1 delivery quarantined: The file's SHA-256 does not match what the sender declared.")
+        self.run_door(door.release, aid, "checked-by-hand")
+        e = self.log_entries()[-1]
+        self.assertEqual((e["outcome"], e["notes"], e["kind"]), ("released", ["archive contents unchecked (.7z)"], "archive"))
+
+    def test_an_older_janus_without_kind_or_notes_still_delivers(self):
+        aid = self.arrival("servermail", "photos.7z")
+        code, out, err = self.run_door(HERMES_FAKE_JANUS_OLD="1")
+        self.assertEqual((code, err), (0, ""), err)
+        self.assertIn("1 delivered", out)
+        self.assertNotIn("notes", json.loads((self.stage / "delivered" / aid / "verdict.json").read_text()))
+        e = self.log_entries()[-1]
+        self.assertEqual((e["outcome"], e["kind"], e["notes"]), ("delivered", None, []))
+        self.assertRegex(log.line(e), r"  delivered$")
+        aid = self.arrival("lesson", "old.exe")
+        self.run_door(HERMES_FAKE_JANUS_OLD="1")
+        from hermes import config
+        item = log.status(config.load())["quarantine"][0]
+        self.assertEqual((item["id"], item["reasons"], item["notes"], item["kind"]),
+                         (aid, [".exe files are never allowed on any route."], [], None))
+
+    def test_log_lines_from_before_kind_and_notes_still_read(self):
+        log.write({"id": "20251231-235959-000001", "route": "lesson", "dir": "in", "from": "desktop", "to": "~/inbox/a.json",
+                   "name": "a.json", "bytes": 11, "verdict": "pass", "outcome": "delivered", "reasons": []})
+        log.write({"id": "20251231-235959-000002", "route": "lesson", "dir": "in", "from": "desktop", "to": None,
+                   "name": "b.exe", "bytes": 11, "verdict": "quarantine", "outcome": "quarantined", "reasons": ["An old reason."]})
+        lines = [log.line(e) for e in log.entries()]
+        self.assertRegex(lines[0], r"  a\.json  11 B  delivered$")
+        self.assertTrue(lines[1].endswith("quarantined  (An old reason.)"))
+
+    def test_notes_that_are_not_sentences_never_hold_a_delivery(self):
+        for n, odd in enumerate(('"just one string"', "7", "null", '{"a": 1}', '[1, null, "", "a real note", ["x"]]')):
+            self.arrival("servermail", "n%d.txt" % n)
+            code, out, err = self.run_door(HERMES_FAKE_JANUS_NOTES=odd)
+            self.assertEqual((code, err), (0, ""), odd)
+            self.assertIn("1 delivered", out, odd)
+            e = self.log_entries()[-1]
+            self.assertEqual(e["notes"], ["a real note"] if "real" in odd else [], odd)
+            log.line(e)
+        aid = self.arrival("servermail", "saved.txt")           # a saved verdict with an odd kind: delivered, kind unknown
+        (self.stage / "in" / aid / "verdict.json").write_text(json.dumps({"verdict": "pass", "reasons": [], "kind": 7, "notes": "x"}))
+        self.run_door(HERMES_JANUS=str(self.home / "no-janus"))
+        e = self.log_entries()[-1]
+        self.assertEqual((e["outcome"], e["kind"], e["notes"]), ("delivered", None, []))
+        self.assertEqual(self.listing("held"), [])
+
+    def test_control_characters_in_notes_and_reasons_never_reach_the_terminal(self):
+        e = {"reasons": ["bad\x1b[31m red\nsecond line", "\x1b\x07\r\n"], "notes": ["note\x1b[2J\nspoof", "\x00\x1f\x7f"]}
+        self.assertEqual(log.strings(e["notes"]), ["note [2J spoof"])
+        self.assertEqual(log.strings(e["reasons"]), ["bad [31m red second line"])
+        text = log.remarks(e)
+        self.assertNotRegex(text, r"[\x00-\x1f\x7f]")
+        self.assertIn("note [2J spoof", text)
 
     def assertHeld(self, aid, fragment, **env):
         code, out, err = self.run_door(**env)
@@ -475,6 +580,8 @@ class DoorTest(unittest.TestCase):
         self.assertRegex(lines[-1], r"^\d{4}-\d\d-\d\d \d\d:\d\d  lesson         desktop → ~/inbox/c.json  c.json  11 B  delivered$")
         self.assertIn("quarantined  (.exe files are never allowed on any route.)", "\n".join(lines))
         self.assertEqual(len(log.entries(limit=2)), 2)
+        for e in log.entries():                                  # every line the door writes has the same fields
+            self.assertEqual((e["notes"], e["kind"] in (None, "document")), ([], True), e)
 
     def test_command_line(self):
         self.arrival("lesson", "a.json")

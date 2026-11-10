@@ -159,10 +159,12 @@ sender ─ssh, Hermes key─▶ hermes receive ─▶ <stage>/incoming/<id>/ ─
 ```
 janus check --json <arrival dir>     reads meta.json and data; never writes there
 exit 0 = pass · 10 = quarantine · 11 = duplicate · anything else = Janus failed → Hermes holds
-stdout: { "verdict": "pass", "reasons": [], "sha256": "…", "janus": "0.1.0",
-          "checks": { "route": "ok", "kind": "ok", "shape": "ok", "integrity": "ok" } }
+stdout: { "verdict": "pass", "janus": "0.2.2", "sha256": "…", "kind": "archive",
+          "checks": { "route": "ok", "kind": "ok", "shape": "ok", "integrity": "ok" },
+          "reasons": [], "notes": ["archive contents unchecked (.7z)"], "ms": 212 }
 ```
-- `reasons` are plain sentences, because the Delivery page shows them as-is (e.g. "`.exe` files are never allowed on any route").
+- `reasons` are plain sentences, because the Delivery page shows them as-is (e.g. "`.exe` files are never allowed on any route"). Janus runs every check, so a verdict may give several; Hermes keeps and shows all of them.
+- `notes` are remarks that change nothing (an archive Janus cannot look inside, archives inside an archive, a tree's summary); `kind` is the kind Janus detected. Both go into the log line and onto the page; a Janus from before them is read as no notes and no kind (`docs/janus-contract.md`).
 - **No Janus, no delivery.** Until Janus exists, arrivals wait in `held/`. The old portals stay in use until then (§9).
 
 ### Quarantine, held, skipped
@@ -219,8 +221,8 @@ A `server` plugin (the plugin kind from the Mentor server-plugin work) shipped i
 **On the page (laid out for {{PHONE}} first, 375 px):**
 1. **Status line:** "4 delivered today · 1 quarantined · 1 waiting for {{PC}}". The same line feeds Elaia's Home page.
 2. **Send box:** pick a route (Torrent: type; Note or Link to {{PC}}), paste a magnet link, link or note, then Send. The answer appears in place: "Handed to Hermes · Janus checking…", then the verdict. It's text only, because files from the phone go by Taildrop and from {{PC}} by Send To, and Elaia's POST cap is 4 KB.
-3. **Recent deliveries:** time, route, from → to, name, size and a verdict chip (✓ delivered · ⚠ quarantined · ⏸ held · ↻ waiting · ✕ undelivered). Filters: All · Quarantined · Outbox.
-4. **Quarantine detail:** the reason in plain words, sender, SHA-256, and the `hermes release` / `hermes discard` lines with copy buttons.
+3. **Recent deliveries:** time, route, from → to, name, size and a verdict chip (✓ delivered · ⚠ quarantined · ⏸ held · ↻ waiting · ✕ undelivered), plus the kind Janus detected and, when he left a note, a ⚠ chip with the words ("⚠ Note: archive contents unchecked (.7z)"): an icon and the text, never colour alone. Filters: All · Quarantined · Outbox.
+4. **Quarantine detail:** every reason in plain words (one line each when there are several), Janus's notes, sender, kind, SHA-256, and the `hermes release` / `hermes discard` lines with copy buttons.
 5. **Fetchers:** the last run of each, with Fetch now, Check now and Collect phone mail.
 6. **New on main** (until Zeus exists): each new commit with its deploy line.
 

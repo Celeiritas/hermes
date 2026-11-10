@@ -10,6 +10,18 @@
 - Tests: `SetupTest` runs `hermes.ps1 setup` for real in a temporary home folder (Windows PowerShell 5 on a PC, `pwsh` in CI): port and address copied from the alias, the alias found by the server's name, `-Port` wins, the question, setup stops when no port is known and accepts an explicit `-Port 0`, two candidate blocks pick none, one prefix match still works and is shown, an exact match beats prefix matches, patterns ignored, a missing alias changes nothing, an existing block kept. `tests/test_config.py` covers the sshd warning with a fake `ss`.
 - CI runs on `ubuntu-24.04`, pinned: `ubuntu-latest` moved to a release on which the Delivery page's browser cannot be installed.
 
+## 0.4.1 – 2026-11-09
+- **What Janus adds to a verdict is kept and shown** (issue #25, `docs/janus-contract.md`): `notes` (remarks that change nothing, such as "archive contents unchecked (.7z)"), `kind` (the kind he detected) and **every** reason, since Janus runs every check even after one has failed.
+  - `verdict.json` was already Janus's answer as it came. Every log line now has `kind` and `notes` next to `reasons`; `hermes log` and `hermes status` end a line with `(every reason)  ⚠ note: the notes`; `hermes status --json` items have `notes` and `kind`.
+  - A delivery that passes with a note is delivered like any other and raises no alert. A quarantined one keeps its notes through `hermes release`.
+  - The alert's message is Janus's first reason, with "(and 2 more reasons)" when he gave more. Before, it was the last one.
+  - **Hermes · Delivery** (`plugin/`, 0.4.1): a ⚠ chip with the words "Note: …" next to a delivered or set-aside item (an icon and the text, never colour alone; it wraps on a phone); several reasons as a list, one line each; the kind in the row and in the details. The plugin works these out itself, so it also runs against an installed Hermes 0.4.0.
+  - **An older Janus is fine.** No `notes` or `kind` reads as none, and so do a `verdict.json` and log lines from before this version. A `notes` or `kind` that is not what the contract says is left out of the log and the page; only `verdict` and `reasons` can hold an arrival.
+- Janus's `notes` and `reasons` are printed with every run of control characters (an escape sequence, a newline) turned into one space, so a note cannot scramble or spoof the terminal; a note made only of control characters is dropped.
+- `tests/fixtures/janus` now runs every check like the real one (a wrong size, a wrong hash and a forbidden ending give three reasons), detects a kind, notes an opaque archive (`.7z`, `.rar`), and can play an older Janus (`$HERMES_FAKE_JANUS_OLD`) or send any `notes` (`$HERMES_FAKE_JANUS_NOTES`).
+- Tests: the door, the log and the status with one and several notes, three reasons, an older Janus, older log lines, malformed notes; the plugin's snapshot; the page in Chromium (the ⚠ chip on a delivered row, three reasons in the set-aside item, a second set-aside item with two notes at 375 px, older lines unchanged), and that every chip and reason lies inside its own row.
+- CI runs on `ubuntu-24.04`, pinned. `ubuntu-latest` moved to a release on which Playwright cannot install Chromium, which turned the `delivery-page` job red before any test ran.
+
 ## 0.4.0 – 2026-10-23
 - **Hermes · Delivery** (`plugin/`, the Elaia server plugin `delivery`, issue #11, docs/design.md §6), laid out for a phone first:
   - **The status line** ("2 delivered today · 1 quarantined"), also Elaia's Home line; Home's Needs you says "Look at the set-aside one" while the alert is up.
