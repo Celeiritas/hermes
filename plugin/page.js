@@ -1,6 +1,8 @@
 // Hermes · Delivery (docs/design.md §6): what came in and went out, and what waits on you (set aside by Janus).
 // A list first: the status line, the send box, recent deliveries with filters, what is set aside (quarantined, held,
 // undelivered) with its reasons and copyable lines, then the fetchers. Every state is an icon plus a word.
+// What Janus adds to a verdict shows as he gave it: every reason (one line each), the kind he detected, and his notes
+// (remarks that change nothing, e.g. an archive he could not look inside) as a ⚠ chip with the words (hermes#25).
 // Nothing here decides: Send runs `hermes message` and Janus judges it; there is no Release button yet (issue #27).
 // The road picture (parcels, gate, shelf, cage) waits for the owner's art approval (argus-ui docs/ui-plan.md §13).
 leafy.register('delivery', (() => {
@@ -15,6 +17,10 @@ leafy.register('delivery', (() => {
   const $ = (s, el = ROOT) => el.querySelector(s), $$ = (s, el = ROOT) => [...el.querySelectorAll(s)];
   const e = s => A.esc(String(s ?? ''));
   const chip = k => { const [i, w] = OUT[k] || ['•', k || 'unknown']; return `<span class="chip o-${e(k)}"><span aria-hidden="true">${i}</span> ${e(w)}</span>`; };
+  // Janus's reasons: one sentence is a line; several are a list, one line each (he runs every check, so there can be more)
+  const why = (list, none = '') => { const r = (list || []).filter(Boolean); return r.length > 1 ? `<ul class="why whys">${r.map(s => `<li>${e(s)}</li>`).join('')}</ul>` : r.length ? `<p class="why">${e(r[0])}</p>` : none; };
+  // his notes: a ⚠ and the words, on a delivered item as well as a set-aside one. Older log lines and verdicts have none
+  const notes = list => { const n = (list || []).filter(Boolean); return n.length ? `<p class="dnotes">${n.map(s => `<span class="chip dnote"><span aria-hidden="true">⚠</span> Note: ${e(s)}</span>`).join('')}</p>` : ''; };
   function size(n) { if (n == null) return ''; const u = ['B', 'KB', 'MB', 'GB']; let i = 0; while (n >= 1024 && i < 3) { n /= 1024; i++; } return i ? `${n.toFixed(1)} ${u[i]}` : `${n} B`; }
   function ago(iso) {
     const t = Date.parse(iso); if (!t) return '';
@@ -28,16 +34,16 @@ leafy.register('delivery', (() => {
   /* ---------- the sections ---------- */
   const row = r => `<li class="drow${BAD.includes(r.outcome) ? ' bad' : ''}">
       <div class="dhead"><span>${chip(r.outcome)} <b>${e(r.name || '(no name)')}</b></span><span class="meta">${e(ago(r.t))}</span></div>
-      <p class="meta">${e(r.route || '?')} · ${e(r.from || '?')}${r.to ? ` → ${e(r.to)}` : ''}${r.bytes != null ? ` · ${e(size(r.bytes))}` : ''}</p>
-      ${(r.reasons || []).length ? `<p class="why">${(r.reasons || []).map(e).join(' ')}</p>` : ''}</li>`;
+      <p class="meta">${e(r.route || '?')} · ${e(r.from || '?')}${r.to ? ` → ${e(r.to)}` : ''}${r.bytes != null ? ` · ${e(size(r.bytes))}` : ''}${r.kind ? ` · ${e(r.kind)}` : ''}</p>
+      ${why(r.reasons)}${notes(r.notes)}</li>`;
   function aside(i) {
     const o = open.has(i.id), lines = (i.folder === 'quarantine' ? [`hermes release ${i.id} --reason checked-by-hand`] : []).concat([`hermes discard ${i.id}`]);
     return `<li class="aside" data-id="${e(i.id)}">
       <div class="dhead"><span>${chip(i.folder)} <b>${e(i.name || '(no name)')}</b></span><span class="meta">${e(ago(i.since))}</span></div>
-      <p class="why">${(i.reasons || []).length ? (i.reasons || []).map(e).join(' ') : 'No reason was given.'}</p>
+      ${why(i.reasons, '<p class="why">No reason was given.</p>')}${notes(i.notes)}
       <div class="acts"><button type="button" class="more" aria-expanded="${o}">${o ? 'Hide the details' : 'Show the details'}</button></div>
       <div class="detail" ${o ? '' : 'hidden'}>
-        <dl><dt>From</dt><dd>${e(i.from || 'unknown')}</dd><dt>Route</dt><dd>${e(i.route || '?')}</dd><dt>Size</dt><dd>${e(size(i.bytes) || '?')}</dd>
+        <dl><dt>From</dt><dd>${e(i.from || 'unknown')}</dd><dt>Route</dt><dd>${e(i.route || '?')}</dd><dt>Size</dt><dd>${e(size(i.bytes) || '?')}</dd>${i.kind ? `<dt>Kind</dt><dd>${e(i.kind)}</dd>` : ''}
           <dt>SHA-256</dt><dd><code>${e(i.sha256 || 'not recorded')}</code></dd></dl>
         <p class="meta">Hermes never releases on his own. To act on it, run one of these on the server:</p>
         ${lines.map(l => `<div class="cmd"><code>${e(l)}</code><button type="button" class="copy" data-line="${e(l)}">Copy ${l.split(' ')[1]} line</button></div>`).join('')}

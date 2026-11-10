@@ -246,7 +246,8 @@ def collect(env=None, out=None):
             door.move(f, home / "failed" / aid / "data")
             door.note(home / "failed" / aid, "error.txt", "no taildrop route for %r and no default; set taildrop.default in routes.json" % os.path.splitext(f.name)[1])
             log.write({"id": aid, "route": None, "dir": "in", "from": "taildrop", "to": None, "name": f.name, "bytes": None,
-                       "verdict": None, "outcome": "failed", "reasons": ["No route for a Taildrop of that kind."]})
+                       "verdict": None, "outcome": "failed", "reasons": ["No route for a Taildrop of that kind."],
+                       "kind": None, "notes": []})
             failures += 1
             continue
         sender = {"via": "taildrop", "key": None, "node": None, "user": None}

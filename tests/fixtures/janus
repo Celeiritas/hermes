@@ -4,9 +4,14 @@ writes into the arrival:
     janus check --json <arrival dir>      reads meta.json and data; prints one JSON verdict on stdout
     exit 0 = pass · 10 = quarantine · 11 = duplicate · anything else = Janus failed (Hermes holds the arrival)
 The verdict comes from HERMES_FAKE_JANUS when it is set (pass | quarantine | duplicate | fail | hang | garbage; "hang"
-never returns, for timeout tests; "garbage" exits 0 with text that is not a verdict). Otherwise the file decides: a size or sha256 that doesn't match meta.json is a quarantine
-(integrity), an executable or script name is a quarantine (kind), a name containing "duplicate" is a duplicate, and
-anything else passes."""
+never returns, for timeout tests; "garbage" exits 0 with text that is not a verdict). Otherwise the file decides, and
+like the real Janus every check runs, so one verdict can carry several reasons: a size that doesn't match meta.json
+(integrity), a sha256 that doesn't (integrity) and an executable or script name (kind) each add their own sentence and
+make it a quarantine; a name containing "duplicate" is a duplicate; anything else passes.
+The answer also carries "kind" (from the file's ending: image, archive, audio, document, or null), "notes" (non-fatal
+remarks: a .7z or .rar passes with "archive contents unchecked (.7z)") and "ms". HERMES_FAKE_JANUS_OLD=1 answers like
+a Janus from before those fields: no kind, no notes, no ms. HERMES_FAKE_JANUS_NOTES holds JSON that is sent as "notes"
+exactly as it is (several notes, or something that is not a list of sentences at all)."""
 import hashlib
 import json
 import os
@@ -16,6 +21,9 @@ import time
 VERSION = "0.0-fake"
 EXIT = {"pass": 0, "quarantine": 10, "duplicate": 11, "fail": 1}
 NEVER = (".exe", ".msi", ".bat", ".cmd", ".ps1", ".sh", ".com", ".scr", ".dll", ".py", ".js", ".vbs")
+KINDS = {"image": (".png", ".jpg", ".jpeg", ".gif", ".webp"), "archive": (".zip", ".tar", ".gz", ".7z", ".rar"),
+         "audio": (".mp3", ".flac", ".ogg"), "document": (".txt", ".md", ".pdf", ".json")}
+OPAQUE = (".7z", ".rar")          # archives nobody can list without unpacking: they pass, with a note
 
 
 def sha256(path):
@@ -27,8 +35,9 @@ def sha256(path):
 
 
 def check(arrival):
+    started = time.monotonic()
     checks = {"route": "ok", "kind": "ok", "shape": "ok", "integrity": "ok"}
-    reasons = []
+    reasons, notes = [], []
     try:
         with open(os.path.join(arrival, "meta.json")) as f:
             meta = json.load(f)
@@ -39,6 +48,11 @@ def check(arrival):
         print("janus: cannot read the arrival: %s" % e, file=sys.stderr)
         return "fail", {"verdict": "fail", "reasons": ["Janus could not read the arrival."], "sha256": None,
                         "janus": VERSION, "checks": checks}
+    name = str(meta.get("name", "")).lower()
+    ext = name[name.rfind("."):] if "." in name else ""
+    kind = next((k for k, endings in KINDS.items() if ext in endings), None)
+    if ext in OPAQUE:
+        notes.append("archive contents unchecked (%s)" % ext)
     forced = os.environ.get("HERMES_FAKE_JANUS")
     if forced == "hang":
         time.sleep(3600)
@@ -50,18 +64,27 @@ def check(arrival):
         if verdict != "pass":
             reasons.append("The fake Janus was told to answer %s." % verdict)
     else:
-        name = str(meta.get("name", "")).lower()
         verdict = "pass"
-        if size != meta.get("bytes") or digest != meta.get("sha256"):
-            verdict, checks["integrity"] = "quarantine", "fail"
-            reasons.append("The file's size or SHA-256 does not match what the sender declared.")
-        elif name.endswith(NEVER):
-            verdict, checks["kind"] = "quarantine", "fail"
-            reasons.append("%s files are never allowed on any route." % name[name.rfind("."):])
+        if size != meta.get("bytes"):                    # every check runs: each failure adds its own sentence
+            checks["integrity"] = "fail"
+            reasons.append("The file is %d bytes, not the %s the sender declared." % (size, meta.get("bytes")))
+        if digest != meta.get("sha256"):
+            checks["integrity"] = "fail"
+            reasons.append("The file's SHA-256 does not match what the sender declared.")
+        if name.endswith(NEVER):
+            checks["kind"] = "fail"
+            reasons.append("%s files are never allowed on any route." % ext)
+        if reasons:
+            verdict = "quarantine"
         elif "duplicate" in name:
             verdict = "duplicate"
             reasons.append("This file was already delivered.")
-    return verdict, {"verdict": verdict, "reasons": reasons, "sha256": digest, "janus": VERSION, "checks": checks}
+    out = {"verdict": verdict, "reasons": reasons, "sha256": digest, "janus": VERSION, "checks": checks}
+    if os.environ.get("HERMES_FAKE_JANUS_NOTES"):
+        notes = json.loads(os.environ["HERMES_FAKE_JANUS_NOTES"])
+    if not os.environ.get("HERMES_FAKE_JANUS_OLD"):
+        out.update(kind=kind, notes=notes, ms=int((time.monotonic() - started) * 1000))
+    return verdict, out
 
 
 def main(argv):

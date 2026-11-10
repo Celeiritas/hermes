@@ -34,6 +34,7 @@ class FakeJanusTest(unittest.TestCase):
         self.tmp = tempfile.TemporaryDirectory()
         self.addCleanup(self.tmp.cleanup)
         os.environ.pop("HERMES_FAKE_JANUS", None)
+        os.environ.pop("HERMES_FAKE_JANUS_OLD", None)
 
     def test_a_good_file_passes(self):
         d = arrival(self.tmp.name, "notes.txt")
@@ -56,6 +57,29 @@ class FakeJanusTest(unittest.TestCase):
         code, out, _ = check(arrival(self.tmp.name, "notes.txt", sha256="0" * 64))
         self.assertEqual(code, 10)
         self.assertEqual(out["checks"]["integrity"], "fail")
+
+    def test_every_failed_check_adds_its_own_reason(self):
+        code, out, _ = check(arrival(self.tmp.name, "setup.exe", bytes=999, sha256="0" * 64))
+        self.assertEqual(code, 10)
+        self.assertEqual(out["reasons"], ["The file is 11 bytes, not the 999 the sender declared.",
+                                          "The file's SHA-256 does not match what the sender declared.",
+                                          ".exe files are never allowed on any route."])
+        self.assertEqual((out["checks"]["integrity"], out["checks"]["kind"]), ("fail", "fail"))
+
+    def test_the_kind_and_the_notes(self):
+        code, out, _ = check(arrival(self.tmp.name, "notes.txt"))
+        self.assertEqual((code, out["kind"], out["notes"]), (0, "document", []))
+        self.assertIsInstance(out["ms"], int)
+        code, out, _ = check(arrival(self.tmp.name, "photos.7z"))
+        self.assertEqual((code, out["verdict"], out["reasons"]), (0, "pass", []))       # a note never changes the verdict
+        self.assertEqual((out["kind"], out["notes"]), ("archive", ["archive contents unchecked (.7z)"]))
+        code, out, _ = check(arrival(self.tmp.name, "thing.xyz"))
+        self.assertEqual((code, out["kind"], out["notes"]), (0, None, []))
+
+    def test_an_older_janus_has_no_kind_and_no_notes(self):
+        code, out, _ = check(arrival(self.tmp.name, "photos.7z"), HERMES_FAKE_JANUS_OLD="1")
+        self.assertEqual(code, 0)
+        self.assertEqual(sorted(out), ["checks", "janus", "reasons", "sha256", "verdict"])
 
     def test_a_duplicate(self):
         code, out, _ = check(arrival(self.tmp.name, "duplicate.txt"))

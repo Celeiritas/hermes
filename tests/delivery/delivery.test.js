@@ -3,6 +3,8 @@
 // hermes#11 "done means": the list renders from a fixture log; the send box posts and shows the verdict; run accepts only
 // the allowlisted jobs; a cross-site POST is refused. Plus: set-aside detail with copyable lines, filters, the alert,
 // Home's "Needs you", keyboard focus across a refresh, 375 px without sideways scroll, every state an icon and a word.
+// hermes#25: a delivered item with a note from Janus is listed with a ⚠ chip and the note; a verdict with three reasons
+// shows all three; log lines and verdicts from before `kind` and `notes` render as they always did.
 const {BASE, check, page, noOverflow, shot, run} = require('./lib');
 const fs = require('fs'), path = require('path');
 const H = path.join(path.dirname(process.env.FIXTURES), 'home');            // Elaia's throwaway HOME (argus-ui tests/run.sh)
@@ -16,6 +18,8 @@ function iso(m) {
 const month = iso(0).slice(0, 7);                       // the month file Hermes reads
 const calls = () => { try { return fs.readFileSync(at('calls.jsonl'), 'utf8').trim().split('\n').filter(Boolean).map(l => JSON.parse(l)); } catch (e) { return []; } };
 const ORIGIN = new URL(BASE).origin;
+// three reasons in one verdict: Janus runs every check, and each one that fails says its own sentence
+const WHY = ['The file is 2048 bytes, not the 4096 the sender declared.', "The file's SHA-256 does not match what the sender declared.", 'An executable (.exe) is never delivered.'];
 
 run(async b => {
   for (const d of ['.config/hermes', '.local/share/hermes/stage', '.local/share/hermes/log', '.local/state/argus-ui/alerts', 'mail', 'watch']) fs.mkdirSync(at(d), {recursive: true});
@@ -26,16 +30,18 @@ run(async b => {
   const line = (m, o) => JSON.stringify({t: iso(m), dir: 'in', from: '{{PHONE}}', reasons: [], ...o});
   fs.writeFileSync(at('.local/share/hermes/log', `deliveries-${month}.jsonl`), [
     line(-50, {id: 'a1', route: 'torrent', to: '~/watch/show.torrent', name: 'show.torrent', bytes: 41000, outcome: 'delivered'}),
+    line(-45, {id: 'a5', route: 'servermail', to: '~/mail/photos.7z', name: 'photos.7z', bytes: 5.2e6, outcome: 'delivered', kind: 'archive', notes: ['archive contents unchecked (.7z)']}),
     line(-40, {id: 'a2', route: 'pcmail', dir: 'out', from: 'local', to: 'taildrop:{{PC}}', name: 'report.pdf', bytes: 2.4e6, outcome: 'waiting', reasons: ['{{PC}} is asleep']}),
-    line(-30, {id: 'a3', route: 'servermail', name: 'setup.exe', bytes: 2048, outcome: 'quarantined', reasons: ['An executable (.exe) is never delivered.']}),
+    line(-30, {id: 'a3', route: 'servermail', name: 'setup.exe', bytes: 2048, outcome: 'quarantined', reasons: WHY, kind: null, notes: []}),
     line(-20, {id: 'a4', route: 'servermail', to: '~/mail/notes.txt', name: 'notes.txt', bytes: 300, outcome: 'delivered'})].join('\n') + '\n');
+  // a1 to a4 carry no `kind` and no `notes`, as every log line did before Hermes 0.4.1 (only a3 and a5 are new ones)
   const q = at('.local/share/hermes/stage/quarantine/20261023-101500-q1');
   fs.mkdirSync(q, {recursive: true});
   fs.writeFileSync(path.join(q, 'meta.json'), JSON.stringify({id: '20261023-101500-q1', route: 'servermail', name: 'setup.exe', bytes: 2048, sha256: 'ab'.repeat(32),
     sender: {key: '{{PHONE}}', via: 'ssh'}, received: iso(-30)}));
-  fs.writeFileSync(path.join(q, 'verdict.json'), JSON.stringify({verdict: 'quarantine', reasons: ['An executable (.exe) is never delivered.']}));
+  fs.writeFileSync(path.join(q, 'verdict.json'), JSON.stringify({verdict: 'quarantine', reasons: WHY, kind: null, notes: []}));
   fs.writeFileSync(at('.local/state/argus-ui/alerts/hermes.json'), JSON.stringify({job: 'hermes-door', level: 'alert', since: iso(-30),
-    message: '1 delivery quarantined: An executable (.exe) is never delivered.', link: 'delivery'}));
+    message: `1 delivery quarantined: ${WHY[0]} (and 2 more reasons)`, link: 'delivery'}));
 
   // ---- Home: Needs you points here
   const p = await page(b);
@@ -45,17 +51,32 @@ run(async b => {
 
   // ---- the page: status line, alert, sections in order
   await p.goto(BASE + 'delivery'); await p.locator('.delivery').waitFor();
-  check(/2 delivered today/.test(await p.locator('#dstatus').textContent()) && /1 quarantined/.test(await p.locator('#dstatus').textContent()), `the status line counts today and what is set aside ("${await p.locator('#dstatus').textContent()}")`);
+  check(/3 delivered today/.test(await p.locator('#dstatus').textContent()) && /1 quarantined/.test(await p.locator('#dstatus').textContent()), `the status line counts today and what is set aside ("${await p.locator('#dstatus').textContent()}")`);
   check(/Hermes says:.*quarantined/.test(await p.locator('.dalert').textContent()), 'the alert shows what Hermes said');
   const heads = await p.locator('.delivery h3').allTextContents();
   check(heads.map(h => h.replace(/\s*\d+$/, '')).join(' | ') === 'Send a note | Set aside | Recent deliveries | Fetchers', `sections in reading order: ${heads.join(' | ')}`);
 
   // recent deliveries from the log, newest first, each state an icon and a word
   const names = await p.locator('.recent .drow b').allTextContents();
-  check(names.join(',') === 'notes.txt,setup.exe,report.pdf,show.torrent', `recent deliveries, newest first (${names.join(', ')})`);
+  check(names.join(',') === 'notes.txt,setup.exe,report.pdf,photos.7z,show.torrent', `recent deliveries, newest first (${names.join(', ')})`);
   check(/servermail · \{\{PHONE\}\} → ~\/mail\/notes.txt · 300 B/.test(await p.locator('.recent .drow').first().textContent()), 'each row: route, from → to, size');
   const chips = await p.locator('.delivery .chip').evaluateAll(cs => cs.map(c => [c.querySelector('[aria-hidden]')?.textContent.trim(), c.textContent.replace(/^\S+\s*/, '').trim()]));
   check(chips.length >= 5 && chips.every(([i, w]) => i && w.length > 2), `every state is an icon and a word (${[...new Set(chips.map(c => c.join(' ')))].join(', ')})`);
+  // what Janus adds to a verdict (hermes#25): notes, the kind he detected, and every reason
+  const tidy = t => t.replace(/\s+/g, ' ').trim();
+  // really in its row: each one has a size and lies inside the row's box (a class named .note is pinned elsewhere by Elaia's own styles)
+  const inside = (box, sel) => box.evaluate((b, sel) => { const o = b.getBoundingClientRect(), all = [...b.querySelectorAll(sel)];
+    return all.length > 0 && all.every(c => { const r = c.getBoundingClientRect(); return r.height > 0 && r.top >= o.top && r.bottom <= o.bottom && r.left >= o.left && r.right <= o.right; }); }, sel);
+  const noted = p.locator('.recent .drow', {hasText: 'photos.7z'});
+  check(await noted.locator('.chip.o-delivered').count() === 1 && tidy(await noted.locator('.chip.dnote').textContent()) === '⚠ Note: archive contents unchecked (.7z)',
+    `a delivered item with a note from Janus is still Delivered, with a ⚠ chip that says the note ("${tidy(await noted.locator('.dnotes').textContent())}")`);
+  check(/ · 5\.0 MB · archive$/.test(tidy(await noted.locator('p.meta').textContent())), `its row names the kind Janus detected ("${tidy(await noted.locator('p.meta').textContent())}")`);
+  check(await inside(noted, '.dnote') && await noted.locator('.dnote').isVisible(), 'the note chip sits inside its row, where you read it');
+  const plain = p.locator('.recent .drow', {hasText: 'notes.txt'});
+  check(await plain.locator('.dnote, .why').count() === 0 && / · 300 B$/.test(tidy(await plain.locator('p.meta').textContent())), 'a log line from before kind and notes renders as it always did: no note, no kind');
+  const three = (await p.locator('.recent .drow', {hasText: 'setup.exe'}).locator('.whys li').allTextContents()).map(tidy);
+  check(three.length === 3 && three.every((s, n) => s === WHY[n]), `a delivery with three reasons lists all three, one line each (${three.length})`);
+  check(tidy(await p.locator('.recent .drow', {hasText: 'report.pdf'}).locator('p.why').textContent()) === '{{PC}} is asleep', 'one reason stays one line');
   await p.locator('[data-f="quarantine"]').click();
   check(await p.locator('[data-f="quarantine"]').getAttribute('aria-pressed') === 'true' && (await p.locator('.recent .drow b').allTextContents()).join() === 'setup.exe', 'the Quarantined filter shows only the quarantined delivery');
   await p.locator('[data-f="outbox"]').click();
@@ -65,6 +86,8 @@ run(async b => {
   // set aside: the reason in plain words, details on demand, copyable lines, no Release button (issue #27)
   const item = p.locator('.aside').first();
   check(/An executable \(\.exe\) is never delivered\./.test(await item.locator('.why').textContent()), 'set aside: the reason in plain words');
+  const whys = (await item.locator('.whys li').allTextContents()).map(tidy);
+  check(whys.length === 3 && whys.every((s, n) => s === WHY[n]) && await item.locator('.dnote').count() === 0, `set aside: every reason Janus gave, one line each, and no note where he had none (${whys.join(' / ')})`);
   check(await p.locator('.delivery button', {hasText: /^Release/}).count() === 0, 'there is no Release button (Hermes never releases on his own; #27 adds it through Zeus)');
   const more = item.locator('.more');
   check(await more.getAttribute('aria-expanded') === 'false' && await item.locator('.detail').isHidden(), 'details start closed');
@@ -83,7 +106,8 @@ run(async b => {
   await p.locator('#d-route').selectOption('servermail');
   await p.locator('#d-text').fill('buy olive oil');
   await p.locator('.send .go').click();
-  await p.locator('#dstatus', {hasText: 'delivered'}).waitFor({timeout: 5000});
+  // wait for the verdict itself: the status line says "delivered today" all along, so waiting for that word waits for nothing
+  await p.locator('#dstatus', {hasText: /note-.*: delivered/}).waitFor({timeout: 5000});
   const sent = calls().find(c => c.args[0] === 'message');
   check(sent && sent.args.join(' ') === 'message servermail' && sent.stdin === 'buy olive oil', `Send note runs hermes message on that route with the text on stdin (${JSON.stringify(sent)})`);
   check(/note-.*: delivered/.test(await p.locator('#dstatus').textContent()) && await p.locator('#d-text').inputValue() === '', 'the verdict shows in place and the box is cleared');
@@ -122,8 +146,21 @@ run(async b => {
   await p.evaluate(() => refresh()); await p.waitForTimeout(600);
   check(await p.locator('#d-text').inputValue() === 'half a thought' && await p.evaluate(() => document.activeElement.id === 'd-text'), 'while you type, a refresh does not take the text or the focus');
 
-  // ---- phone, reduced motion
+  // ---- phone, reduced motion. A second set-aside item arrives first: an archive that failed a check and has two notes
+  const q2 = at('.local/share/hermes/stage/quarantine/20261023-101700-q2');
+  fs.mkdirSync(q2, {recursive: true});
+  fs.writeFileSync(path.join(q2, 'meta.json'), JSON.stringify({id: '20261023-101700-q2', route: 'servermail', name: 'bundle.7z', bytes: 7.5e6, sha256: 'cd'.repeat(32),
+    sender: {key: '{{PHONE}}', via: 'ssh'}, received: iso(-2)}));
+  fs.writeFileSync(path.join(q2, 'verdict.json'), JSON.stringify({verdict: 'quarantine', reasons: [WHY[1]], kind: 'archive',
+    notes: ['archive contents unchecked (.7z)', 'nested archives: 3 (not opened)']}));
   const ph = await page(b, 375, 760); await ph.emulateMedia({reducedMotion: 'reduce'}); await ph.goto(BASE + 'delivery'); await ph.locator('.delivery').waitFor();
+  const second = ph.locator('.aside', {hasText: 'bundle.7z'});
+  const said = (await second.locator('.chip.dnote').allTextContents()).map(tidy);
+  check(said.join(' | ') === '⚠ Note: archive contents unchecked (.7z) | ⚠ Note: nested archives: 3 (not opened)' && tidy(await second.locator('p.why').textContent()) === WHY[1],
+    `a set-aside item keeps its reason and its notes, one ⚠ chip each (${said.join(' | ')})`);
+  check(await inside(second, '.dnote, .why') && await inside(ph.locator('.aside', {hasText: 'setup.exe'}), '.whys li'), 'phone: the reasons and the note chips sit inside their items');
+  await second.locator('.more').click(); await ph.waitForTimeout(200);
+  check(/Kind\s*archive/.test(await second.locator('.detail').textContent()), 'its details name the kind Janus detected');
   check(await noOverflow(ph), '375 px: no sideways scrolling');
   const small = await ph.locator('.delivery button:visible, .delivery select, .delivery textarea').evaluateAll(es => es.filter(e => e.getBoundingClientRect().height < 44).map(e => e.textContent.trim() || e.id));
   check(small.length === 0, `phone: every control has a 44 px hit area${small.length ? ' (not: ' + small.join(', ') + ')' : ''}`);

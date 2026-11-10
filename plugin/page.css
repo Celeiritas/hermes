@@ -1,6 +1,6 @@
 /* Hermes · Delivery. Elaia's tokens (--card, --line, --snow, --powder, --ok, --bad, --s*, --fs-*); sky blue is Hermes's hue.
    The road art (parcels, gate, shelf, cage, held box, outbox) waits for the owner's approval (argus-ui docs/ui-plan.md §13). */
-.delivery{--wing:#7FB3D5;max-width:880px;display:grid;gap:var(--s6);padding-bottom:var(--s8)}
+.delivery{--wing:#7FB3D5;--note:var(--run,#F1CD7D);max-width:880px;display:grid;gap:var(--s6);padding-bottom:var(--s8)}
 .delivery .dcols,.delivery .dcol{display:grid;gap:var(--s6);align-content:start;min-width:0}
 /* wide screens: what you do (send, set aside) on the left, what happened (recent, fetchers) on the right */
 @media (min-width:1200px){.delivery{max-width:1600px}.delivery .dcols{grid-template-columns:minmax(0,1fr) minmax(0,1fr)}}
@@ -43,6 +43,13 @@
 .delivery .o-delivered,.delivery .o-sent,.delivery .o-released{border-color:var(--ok)}
 .delivery .o-quarantine,.delivery .o-undelivered,.delivery .o-failed{border-color:var(--bad)}
 .delivery .o-held,.delivery .o-waiting,.delivery .o-outbox{border-color:var(--wing)}
+/* Janus's notes: a ⚠ and the words "Note: ...". A note is a sentence, so this chip may wrap (a phone is 375 px wide).
+   The classes are dnote and dnotes because Elaia's own stylesheets already use .note and .notes for other things */
+.delivery .dnotes{display:flex;flex-wrap:wrap;gap:var(--s1)}
+.delivery .chip.dnote{border-color:var(--note);border-radius:12px;white-space:normal;overflow-wrap:anywhere;align-items:baseline;margin-right:0}
+/* several reasons: one line each, with a bullet */
+.delivery .whys{list-style:disc;padding-left:1.2em}
+.delivery .whys li+li{margin-top:2px}
 
 .delivery .filters{display:flex;flex-wrap:wrap;gap:var(--s2);margin-bottom:var(--s3)}
 .delivery .filters [aria-pressed="true"]{border-color:var(--wing);color:var(--snow)}

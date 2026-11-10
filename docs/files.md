@@ -34,32 +34,35 @@ Everything Hermes writes, where, and in what shape. Paths are on {{SERVER}}; `<s
 
 ## `verdict.json` (Janus's answer, saved by the door)
 ```json
-{ "verdict": "quarantine", "reasons": [".exe files are never allowed on any route."], "sha256": "…", "janus": "0.1.0",
-  "checks": { "route": "ok", "kind": "fail", "shape": "ok", "integrity": "ok" } }
+{ "verdict": "quarantine", "janus": "0.2.2", "sha256": "…", "kind": null,
+  "checks": { "route": "ok", "kind": "fail", "shape": "ok", "integrity": "fail" },
+  "reasons": ["The file's SHA-256 does not match what the sender declared.", ".exe files are never allowed on any route."],
+  "notes": [], "ms": 12 }
 ```
-`verdict` is `pass`, `quarantine` or `duplicate` (`docs/janus-contract.md`). When Hermes itself quarantines (a name it refuses, a route that no longer exists), `janus` is `null` and `hermes` is Hermes's version. A release adds `"released": { "at": "…", "user": "<ssh user>", "reason": "<word>", "node": …, "login": …, "ip": … }`.
+`verdict` is `pass`, `quarantine` or `duplicate` (`docs/janus-contract.md`). The file is Janus's answer as it came: every reason (Janus runs every check, so there may be several), the `kind` it detected, and its `notes` (remarks that change nothing, such as `archive contents unchecked (.7z)`). A verdict from an older Janus has no `kind` and no `notes`; Hermes reads that as none. When Hermes itself quarantines (a name it refuses, a route that no longer exists), `janus` is `null` and `hermes` is Hermes's version. A release adds `"released": { "at": "…", "user": "<ssh user>", "reason": "<word>", "node": …, "login": …, "ip": … }`.
 
 ## The log: `~/.local/share/hermes/log/deliveries-YYYY-MM.jsonl`
 One line per outcome, about 200 bytes; a new file every month.
 ```json
 { "t": "2026-10-20T14:12:04-06:00", "id": "20261020-141203-3fa9c1", "route": "lesson", "dir": "in",
   "from": "{{PC}}", "to": "~/.local/share/argus-ui/inbox/git-basics.json", "name": "git-basics.json",
-  "bytes": 18234, "verdict": "pass", "outcome": "delivered", "reasons": [] }
+  "bytes": 18234, "verdict": "pass", "outcome": "delivered", "reasons": [], "kind": "document", "notes": [] }
 ```
+- `reasons`, `kind` and `notes` come from Janus's verdict: every reason, the kind it detected (or `null`) and its notes. A line Hermes writes without a verdict (`held`, `failed`, `discarded`) has `"kind": null` and `"notes": []`; `waiting`, `undelivered` and a `conflict: skip` keep the verdict's kind and notes next to Hermes's own reasons. Lines from before 0.4.1 have no `kind` and no `notes`; every reader takes that as none.
 - `outcome`: `delivered`, `quarantined`, `skipped`, `held`, `failed`, `released` (with `released_by`), `discarded`; outbound: `sent`, `waiting` (once, when the item enters the outbox), `undelivered`.
 - `from` is the sender's key device, fetch job or `via` (`local`, `taildrop`). `to` is the final path (`~` for the home folder), `taildrop:<device>` for outbound items (then `name` is the name the device sees, prefix included), or where a discard went.
-- `hermes log [-n N] [--json]` prints the last N lines (default 50) as `time  route  from → to  name  size  outcome  (reasons)`, or as they are in the file.
+- `hermes log [-n N] [--json]` prints the last N lines (default 50) as `time  route  from → to  name  size  outcome  (reasons)  ⚠ note: notes`, or as they are in the file. Several reasons stand in one pair of brackets; several notes are joined with `; `.
 - Errors Hermes hit itself go to `receive-errors.log` and `door-errors.log` next to it, with tracebacks; a sender only ever sees one line.
 
 ## `hermes status --json`
 ```json
 { "hermes": "0.1.4", "at": "…", "today": { "delivered": 4, "quarantined": 1 },
   "quarantine": [ { "id": "…", "stage": "home", "folder": "quarantine", "route": "lesson", "name": "setup.exe", "bytes": 1234,
-                    "from": "{{PC}}", "since": "2026-10-20T14:12:03-06:00", "reasons": [".exe files are never allowed on any route."], "path": "…" } ],
+                    "from": "{{PC}}", "since": "2026-10-20T14:12:03-06:00", "reasons": [".exe files are never allowed on any route."], "notes": [], "kind": null, "path": "…" } ],
   "held": [], "undelivered": [], "outbox": [], "failed": [], "skipped": [],
   "alert": { "job": "hermes-door", "level": "alert", "since": "…", "message": "1 delivery quarantined: …", "link": "delivery" } }
 ```
-Without `--json`, the status line the Delivery page and Elaia's Home page show ("4 delivered today · 1 quarantined today · 1 quarantined"), then one line per waiting item.
+Without `--json`, the status line the Delivery page and Elaia's Home page show ("4 delivered today · 1 quarantined today · 1 quarantined"), then one line per waiting item, ending like a log line: `(reasons)  ⚠ note: notes`.
 
 ## The alert file: `~/.local/state/argus-ui/alerts/hermes.json`
 Written by the door and by `hermes collect` while `quarantine/`, `held/` or `undelivered/` hold items the owner hasn't seen; removed when there are none. Argus glares while it exists and shows `message` on the `hermes-door` card, linked to the Delivery page (design §5).
