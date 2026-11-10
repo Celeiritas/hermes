@@ -1,9 +1,11 @@
 """routes.json: where each route goes (docs/design.md §2). Load it, expand `~` and {{PLACEHOLDERS}}, validate it, and
 explain it in plain sentences (`hermes check-config`). Who may send what on a route is Janus's file; Hermes only reads
-it to warn about routes Janus doesn't know, because every arrival on such a route would be quarantined."""
+it to warn about routes Janus doesn't know, because every arrival on such a route would be quarantined.
+`hermes check-config` also looks at the machine once: is sshd listening where the devices knock (check_door)?"""
 import json
 import os
 import re
+import subprocess
 from pathlib import Path
 
 CONFIG = "~/.config/hermes/routes.json"        # or $HERMES_CONFIG
@@ -17,6 +19,9 @@ CONFLICTS = {"rename": "the new file gets (2)", "skip": "the new file is set asi
 DOORBELLS = ("jellyfin-refresh",)              # `after`: a fixed list in code; config never names a command
 ROUTE_KEYS = ("to", "stage", "conflict", "subpath", "after", "prefix", "retry_hours", "enabled")
 TAILDROP = "taildrop:"
+TAILSCALE = "tailscale"                        # or $HERMES_TAILSCALE
+SS = "ss"                                      # or $HERMES_SS: lists the listening sockets (iproute2)
+IPV4 = re.compile(r"^\d{1,3}(\.\d{1,3}){3}$")
 
 
 def config_path():
@@ -277,6 +282,51 @@ def _check_janus(cfg, path):
         cfg.warnings.append("Janus's %s doesn't mention route%s %s: every arrival on %s would be quarantined. Add %s to "
                             "Janus's file." % (short(path), "" if one else "s", ", ".join(missing),
                                                "it" if one else "them", "it" if one else "them"))
+
+
+def _tool(cmd, env):
+    """What a read-only tool prints, or None when it is missing, fails or takes too long."""
+    try:
+        r = subprocess.run(cmd, capture_output=True, text=True, timeout=10, env=dict(env))
+    except (OSError, ValueError, subprocess.TimeoutExpired):
+        return None
+    return r.stdout if r.returncode == 0 else None
+
+
+def door_warning(addr, listing):
+    """The warning when `ss -tlnp` (listing) shows no sshd that a device could reach on this machine's tailnet address
+    (addr), else None. A listener counts when it is on that address or on every IPv4 address, and when it is sshd or
+    shows no process name: ss names only the caller's own processes, and the system's sshd belongs to root (a socket
+    that systemd holds open for sshd counts too). So this can miss a problem, but it does not cry wolf."""
+    for line in listing.splitlines():
+        f = line.split()
+        if len(f) < 4 or f[0] != "LISTEN":
+            continue
+        where = f[3].rsplit(":", 1)[0].strip("[]").split("%")[0]
+        if where.startswith("::ffff:"):
+            where = where[7:]
+        names = re.findall(r'\("([^"]+)"', line)
+        if where in (addr, "0.0.0.0", "*") and (not names or any("sshd" in n or n == "systemd" for n in names)):
+            return None
+    return ("sshd is not listening on this machine's Tailscale address (%s), so no device can reach the door. Make sshd "
+            "listen there (ListenAddress and Port in sshd_config; the port is the one the devices' ssh alias names), "
+            "then run `hermes check-config` again." % addr)
+
+
+def check_door(cfg, env=None):
+    """For `hermes check-config` only, never for the commands that carry: one warning when sshd is not listening on the
+    tailnet address (`tailscale ip -4` against `ss -tlnp`, issue #24). It says nothing when either tool is missing or
+    gives no answer: it reports only what it can see, and it changes nothing."""
+    env = os.environ if env is None else env
+    addr = (_tool([env.get("HERMES_TAILSCALE") or TAILSCALE, "ip", "-4"], env) or "").split()
+    if not addr or not IPV4.match(addr[0]):
+        return cfg
+    listing = _tool([env.get("HERMES_SS") or SS, "-tlnp"], env)
+    if listing is not None:
+        w = door_warning(addr[0], listing)
+        if w:
+            cfg.warnings.append(w)
+    return cfg
 
 
 def load(path=None, janus=None):

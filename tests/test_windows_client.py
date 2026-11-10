@@ -1,6 +1,8 @@
 """The Windows client (issue #6, docs/windows-client.md). CI has no PowerShell and no server, so this tests the protocol
 on Linux with exactly the arguments hermes.ps1 composes (the name as base64url, the byte count, the lower-case SHA-256)
-and checks the scripts for the things that must be true of them. The manual checklist in the doc covers the rest."""
+and checks the scripts for the things that must be true of them. The manual checklist in the doc covers the rest.
+Where a PowerShell is on the machine (Windows, or pwsh on Linux), SetupTest also runs `hermes.ps1 setup` for real, in a
+temporary home (issue #24)."""
 import base64
 import contextlib
 import hashlib
@@ -23,6 +25,7 @@ CLIENT = ROOT / "clients" / "windows"
 PS1 = (CLIENT / "hermes.ps1").read_text(encoding="utf-8")
 SENDTO = (CLIENT / "install-sendto.ps1").read_text(encoding="utf-8")
 DOC = (ROOT / "docs" / "windows-client.md").read_text(encoding="utf-8")
+KEYS_DOC = (ROOT / "docs" / "keys.md").read_text(encoding="utf-8")
 ALL256 = bytes(range(256))
 NAMES = ["Report (final) 'draft' [v2] é ü ß 日本語.txt", "a  two  spaces.txt", "comma, semi; amp & eq = pct %.txt",
          "café.txt", "naïve–dash—long.pdf", "x" * 200]
@@ -154,6 +157,15 @@ class ScriptTest(unittest.TestCase):
         for s in ("IdentitiesOnly yes", "IdentityFile ~/.ssh/hermes_", "-t ed25519", "hermes keys add", "config.json"):
             self.assertIn(s, PS1)
 
+    def test_the_port_comes_from_the_alias_and_is_never_assumed(self):
+        """Issue #24: sshd may listen on any port, on the tailnet address only. No 22 in the code, and the docs say so."""
+        self.assertIn("[string]$Alias", PS1)
+        self.assertNotRegex(PS1, r"port = 22\b|-(ne|eq|gt|lt) 22\b")
+        self.assertIn("-Alias {{SSH}}", DOC)
+        self.assertIn("never assumes 22", DOC)
+        self.assertIn("The port and the address come from the alias", KEYS_DOC)
+        self.assertIn("`from=`", KEYS_DOC)
+
     def test_collect_strips_the_prefix(self):
         self.assertIn("'hermes__*'", PS1)
         self.assertIn("$f.Name.Substring(8)", PS1)
@@ -207,6 +219,215 @@ class ScriptTest(unittest.TestCase):
             r = subprocess.run([shell, "-NoProfile", "-NonInteractive", "-Command", check % str(CLIENT / script).replace("'", "''")],
                                capture_output=True, text=True)
             self.assertEqual(r.returncode, 0, script + ": " + r.stdout + r.stderr)
+
+
+class SetupTest(unittest.TestCase):
+    """`hermes.ps1 setup`, run for real (issue #24): the alias hermes-<server> takes its address and its port from the
+    ssh alias the user already has, and no port is ever assumed. Everything is temporary: the home folder (so
+    ~/.ssh), %APPDATA% and the mail folder. The key files are there before setup runs, so neither ssh nor ssh-keygen
+    is started. Skipped where there is no PowerShell, or where it would not take its home from the environment."""
+    ALIAS = ("Host other\n    HostName other.example\n    Port 2200\n\n"
+             "Host myserver ms\n    HostName door.example\n    Port 2022\n    User someone\n")
+
+    def setUp(self):
+        self.shell = shutil.which("powershell") or shutil.which("pwsh")
+        if not self.shell:
+            self.skipTest("no PowerShell here; ScriptTest checks the script as text")
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        tmp = Path(self.tmp.name).resolve()
+        self.home, self.appdata, self.mail = tmp / "home", tmp / "appdata", tmp / "mail"
+        self.ssh = self.home / ".ssh"
+        self.ssh.mkdir(parents=True)
+        self.appdata.mkdir()
+        (self.ssh / "hermes_testpc").write_text("not a real key\n")
+        (self.ssh / "hermes_testpc.pub").write_text("ssh-ed25519 AAAA hermes@testpc\n")
+        self.env = dict(os.environ, HOME=str(self.home), USERPROFILE=str(self.home), APPDATA=str(self.appdata),
+                        COMPUTERNAME="TESTPC")
+        if os.name == "nt":
+            drive, rest = os.path.splitdrive(str(self.home))
+            self.env.update(HOMEDRIVE=drive, HOMEPATH=rest)
+        else:       # pwsh on Linux: the Windows folders the script names, and two stand-ins it only has to find
+            stand_ins = tmp / "bin"
+            stand_ins.mkdir()
+            for exe in ("ssh.exe", "ssh-keygen.exe"):
+                (stand_ins / exe).write_text("#!/bin/sh\nexit 0\n")
+                (stand_ins / exe).chmod(0o755)
+            self.env.update(SystemRoot=str(tmp / "windows"), ProgramFiles=str(tmp / "programs"),
+                            PATH=str(stand_ins) + os.pathsep + self.env.get("PATH", ""))
+        seen = self.ps("-NonInteractive", "-Command", "$HOME").stdout.strip()
+        if not seen or Path(seen).resolve() != self.home:
+            self.skipTest("this PowerShell does not take its home folder from the environment (it says %r)" % seen)
+
+    def ps(self, *args, **kw):
+        policy = ["-ExecutionPolicy", "Bypass"] if os.name == "nt" else []
+        if "input" not in kw:
+            kw["stdin"] = subprocess.DEVNULL
+        return subprocess.run([self.shell, "-NoProfile"] + policy + list(args), capture_output=True, text=True,
+                              env=self.env, timeout=120, **kw)
+
+    def run_setup(self, *args, config=ALIAS, answer=None):
+        """setup -Server testserver -User tester -Device testpc on a fresh ssh config; returns (result, the config after).
+        Without an answer there is nobody to ask (-NonInteractive); with one, it is what the user types."""
+        ssh_config, saved = self.ssh / "config", self.appdata / "Hermes" / "config.json"
+        for old in (ssh_config, saved):
+            if old.exists():
+                old.unlink()
+        if config is not None:
+            ssh_config.write_text(config)
+        line = ["-File", str(CLIENT / "hermes.ps1"), "setup", "-Server", "testserver", "-User", "tester",
+                "-Device", "testpc", "-Mail", str(self.mail)] + list(args)
+        if answer is None:
+            r = self.ps("-NonInteractive", *line)
+        else:
+            r = self.ps(*line, input=answer)
+        return r, (ssh_config.read_text() if ssh_config.exists() else "")
+
+    def block(self, text, host="hermes-testserver"):
+        """The settings under `Host <host>` in an ssh config, as a dict."""
+        found, inside = {}, False
+        for line in text.splitlines():
+            words = line.split(None, 1)
+            if words and words[0] == "Host":
+                inside = words[1].split() == [host]
+            elif inside and len(words) == 2:
+                found[words[0]] = words[1].strip()
+        return found
+
+    def saved(self):
+        return json.loads((self.appdata / "Hermes" / "config.json").read_text(encoding="utf-8"))
+
+    def test_setup_copies_port_and_hostname_from_the_existing_alias(self):
+        r, text = self.run_setup("-Alias", "myserver")
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        self.assertTrue(text.startswith(self.ALIAS), "what was in the ssh config stays, unchanged and first")
+        b = self.block(text)
+        self.assertEqual((b.get("HostName"), b.get("Port"), b.get("User")), ("door.example", "2022", "tester"))
+        self.assertEqual((b.get("IdentityFile"), b.get("IdentitiesOnly")), ("~/.ssh/hermes_testpc", "yes"))
+        self.assertIn("from Host myserver", r.stdout)
+        self.assertIn("ssh myserver 'hermes keys add testpc'", r.stdout)       # the key goes in through the same alias
+        s = self.saved()
+        self.assertEqual((s["server"], s["alias"], s["port"]), ("testserver", "myserver", 2022))
+
+    def test_setup_finds_the_alias_by_the_servers_name(self):
+        """Without -Alias: a block that is called like the server, or whose HostName is the server."""
+        for config, want in (("Host testserver\n    Port 2022\n", ("testserver", "2022", "testserver")),
+                             ("Host box\n    HostName TestServer\n    Port=2023\n", ("TestServer", "2023", "box")),
+                             ("host box b\n\thostname testserver.example\n\tport 2024\n", ("testserver.example", "2024", "box"))):
+            with self.subTest(config=config):
+                r, text = self.run_setup(config=config)
+                self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+                b = self.block(text)
+                self.assertEqual((b.get("HostName"), b.get("Port")), want[:2])
+                self.assertIn("ssh %s 'hermes keys add testpc'" % want[2], r.stdout)
+
+    OTHER = "Host other\n    HostName other.example\n    Port 2200\n"
+
+    def test_setup_never_assumes_22(self):
+        """No alias to copy from, no -Port and nobody to ask: setup stops with a plain message and changes nothing."""
+        r, text = self.run_setup(config=self.OTHER)
+        self.assertEqual(r.returncode, 1, r.stdout + r.stderr)
+        self.assertIn("No port is known", r.stdout)
+        self.assertIn("-Port <n>", r.stdout)
+        self.assertEqual(text, self.OTHER)
+        self.assertFalse((self.appdata / "Hermes" / "config.json").exists())
+
+    def test_an_alias_without_a_port_line_fails_too(self):
+        r, text = self.run_setup(config="Host testserver\n    HostName testserver\n")
+        self.assertEqual(r.returncode, 1, r.stdout + r.stderr)
+        self.assertIn("Host testserver has no Port line", r.stdout)
+        self.assertNotIn("hermes-testserver", text)
+
+    def test_an_explicit_port_0_means_ssh_own_default(self):
+        """-Port 0 on purpose: success, no Port line, and the saved port is 0."""
+        r, text = self.run_setup("-Port", "0", config=self.OTHER)
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        b = self.block(text)
+        self.assertEqual(b.get("HostName"), "testserver")
+        self.assertNotIn("Port", b)
+        self.assertIn("ssh's own default", r.stdout)
+        self.assertIn("ssh tester@testserver 'hermes keys add testpc'", r.stdout)
+        self.assertEqual(self.saved()["port"], 0)
+
+    def test_the_answer_0_means_ssh_own_default_but_no_answer_fails(self):
+        r, text = self.run_setup(config=None, answer="0\n")
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        self.assertNotIn("Port", self.block(text))
+        r, text = self.run_setup(config=None, answer="\n")
+        self.assertEqual(r.returncode, 1, r.stdout + r.stderr)
+        self.assertEqual(text, "")
+
+    def test_another_machines_block_is_never_taken(self):
+        """Server `testserver`; `Host work` has HostName testserver.corp.example and Port 2200. Two such blocks: none picked."""
+        two = ("Host work\n    HostName testserver.corp.example\n    Port 2200\n\n"
+               "Host lab\n    HostName testserver.lab.example\n    Port 2201\n")
+        r, text = self.run_setup(config=two)
+        self.assertEqual(r.returncode, 1, r.stdout + r.stderr)
+        self.assertEqual(text, two)
+        self.assertFalse((self.appdata / "Hermes" / "config.json").exists())
+        for want in ("Host work (HostName testserver.corp.example, Port 2200)",
+                     "Host lab (HostName testserver.lab.example, Port 2201)", "-Alias <name>"):
+            self.assertIn(want, r.stdout)
+        r, text = self.run_setup("-Alias", "lab", config=two)                  # naming one settles it
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        self.assertEqual((self.block(text).get("HostName"), self.block(text).get("Port")), ("testserver.lab.example", "2201"))
+
+    def test_one_prefix_match_still_works_and_is_shown(self):
+        r, text = self.run_setup(config="Host work\n    HostName testserver.corp.example\n    Port 2200\n")
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        self.assertIn("using Host work (HostName testserver.corp.example, Port 2200)", r.stdout)
+        self.assertEqual((self.block(text).get("HostName"), self.block(text).get("Port")), ("testserver.corp.example", "2200"))
+
+    def test_an_exact_match_beats_prefix_matches(self):
+        cfg = ("Host work\n    HostName testserver.corp.example\n    Port 2200\n\n"
+               "Host lab\n    HostName testserver.lab.example\n    Port 2201\n\n"
+               "Host mine\n    HostName testserver\n    Port 2022\n")
+        r, text = self.run_setup(config=cfg)
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        self.assertIn("using Host mine (HostName testserver, Port 2022)", r.stdout)
+        self.assertEqual(self.block(text).get("Port"), "2022")
+
+    def test_setup_asks_for_the_port_when_there_is_no_alias(self):
+        r, text = self.run_setup(config=None, answer="2022\n")
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        self.assertIn("Which port", r.stdout)
+        self.assertEqual(self.block(text).get("Port"), "2022")
+        self.assertIn("ssh -p 2022 tester@testserver 'hermes keys add testpc'", r.stdout)
+        self.assertEqual(self.saved()["port"], 2022)
+
+    def test_the_port_switch_wins_and_is_never_asked_for(self):
+        r, text = self.run_setup("-Alias", "ms", "-Port", "2300")              # ms: the second name on the Host line
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        b = self.block(text)
+        self.assertEqual((b.get("HostName"), b.get("Port")), ("door.example", "2300"))
+        r, text = self.run_setup("-Port", "2301", config=None)
+        self.assertEqual(self.block(text).get("Port"), "2301")
+        self.assertNotIn("Which port", r.stdout)
+
+    def test_an_alias_that_is_not_there_changes_nothing(self):
+        r, text = self.run_setup("-Alias", "nowhere")
+        self.assertEqual(r.returncode, 1)
+        self.assertIn("nowhere", r.stdout)
+        self.assertEqual(text, self.ALIAS)
+        self.assertFalse((self.appdata / "Hermes" / "config.json").exists())
+
+    def test_a_wildcard_block_is_not_the_alias(self):
+        """ssh applies `Host *` to hermes-<server> by itself; copying from it would freeze a default into the alias."""
+        r, text = self.run_setup(config="Host *\n    Port 2500\n\nHost test*\n    Port 2600\n")
+        self.assertEqual(r.returncode, 1, r.stdout + r.stderr)                 # no port from them: setup stops
+        self.assertNotIn("hermes-testserver", text)
+        r, text = self.run_setup("-Port", "0", config="Host *\n    Port 2500\n\nHost test*\n    Port 2600\n")
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        self.assertNotIn("Port", self.block(text))
+
+    def test_an_alias_block_that_is_already_there_is_kept(self):
+        own = "Host hermes-testserver\n    HostName old.example\n    Port 2700\n    User tester\n"
+        r, text = self.run_setup("-Alias", "myserver", config=self.ALIAS + "\n" + own)
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        self.assertEqual(text, self.ALIAS + "\n" + own)
+        self.assertIn("kept", r.stdout)
+        self.assertRegex(r.stdout, r"2700[^\n]*2022|2022[^\n]*2700")           # it says that the two disagree
+        self.assertEqual(self.saved()["port"], 2700)                           # what ssh will really use
 
 
 if __name__ == "__main__":

@@ -14,6 +14,12 @@ from hermes import config
 
 ROOT = Path(__file__).resolve().parent.parent
 EXAMPLE = ROOT / "examples" / "routes.example.json"
+FIXTURES = ROOT / "tests" / "fixtures"
+TAILNET_IP = "192.0.2.7"        # a documentation address stands in for this machine's tailnet address
+SS_HEAD = "State  Recv-Q Send-Q Local Address:Port  Peer Address:PortProcess\n"
+SS_LOCAL = ("LISTEN 0      4096   127.0.0.53%lo:53    0.0.0.0:*\n"
+            "LISTEN 0      128    127.0.0.1:631       0.0.0.0:*\n"
+            "LISTEN 0      128    [::1]:631           [::]:*\n")
 
 
 class Home:
@@ -25,8 +31,11 @@ class Home:
         self.janus = self.home / ".config" / "janus" / "routes.json"
         self.realm = self.home / ".config" / "leafy" / "realm.json"
         self.routes.parent.mkdir(parents=True)
+        # the fake tailscale and the fake ss, so `hermes check-config` never asks this machine's own
         self.env = mock.patch.dict(os.environ, {"HOME": str(self.home), "HERMES_CONFIG": str(self.routes),
-                                                "JANUS_CONFIG": str(self.janus), "LEAFY_REALM": str(self.realm)})
+                                                "JANUS_CONFIG": str(self.janus), "LEAFY_REALM": str(self.realm),
+                                                "HERMES_TAILSCALE": str(FIXTURES / "tailscale"),
+                                                "HERMES_SS": str(FIXTURES / "ss")})
         self.env.start()
         self.doc = json.loads(EXAMPLE.read_text().replace("/srv/media", str(self.media)))
         self.make_folders()
@@ -277,6 +286,59 @@ class ConfigTest(unittest.TestCase):
         r = self.run_cli("--config", str(other))
         self.assertEqual(r.returncode, 0)
         self.assertIn("9 routes ok, 1 warning", r.stdout)
+
+    # --- is sshd where the devices knock? (issue #24) ---
+    def ss(self, *lines):
+        return SS_HEAD + SS_LOCAL + "".join(l + "\n" for l in lines)
+
+    def test_door_warning_when_no_sshd_listens_on_the_tailnet_address(self):
+        w = config.door_warning(TAILNET_IP, self.ss())
+        self.assertIn("sshd is not listening on this machine's Tailscale address (%s)" % TAILNET_IP, w)
+        self.assertIn("no device can reach the door", w)
+        self.assertIn("ListenAddress", w)
+        # something else of the caller's own on that address is not sshd; neither is an sshd on loopback only
+        other = self.ss('LISTEN 0 128 %s:8080 0.0.0.0:* users:(("python3",pid=41,fd=5))' % TAILNET_IP,
+                        'LISTEN 0 128 127.0.0.1:2022 0.0.0.0:* users:(("sshd",pid=42,fd=3))')
+        self.assertIsNotNone(config.door_warning(TAILNET_IP, other))
+        # sshd's own IPv6 socket takes no IPv4 connection, so [::] alone does not reach an IPv4 tailnet address
+        self.assertIsNotNone(config.door_warning(TAILNET_IP, self.ss("LISTEN 0 128 [::]:22 [::]:*")))
+        self.assertIsNotNone(config.door_warning(TAILNET_IP, ""))
+
+    def test_no_door_warning_when_sshd_can_be_reached_there(self):
+        for line in ('LISTEN 0 128 %s:2022 0.0.0.0:* users:(("sshd",pid=42,fd=3))' % TAILNET_IP,   # a user's own sshd
+                     "LISTEN 0 128 %s:2022 0.0.0.0:*" % TAILNET_IP,          # root's sshd: ss shows a user no process name
+                     "LISTEN 0 128 %s%%tailscale0:2022 0.0.0.0:*" % TAILNET_IP,
+                     "LISTEN 0 128 0.0.0.0:22 0.0.0.0:*",                    # every address
+                     "LISTEN 0 128 *:22 *:*",
+                     'LISTEN 0 128 %s:22 0.0.0.0:* users:(("systemd",pid=900,fd=40))' % TAILNET_IP,   # held open for sshd
+                     "LISTEN 0 128 [::ffff:%s]:22 *:*" % TAILNET_IP):
+            with self.subTest(line=line):
+                self.assertIsNone(config.door_warning(TAILNET_IP, self.ss(line)))
+
+    def test_check_config_warns_about_sshd_only_when_it_can_see(self):
+        self.h.write()
+        seen = {"HERMES_FAKE_TAILNET_IP": TAILNET_IP, "HERMES_FAKE_SS": self.ss()}
+        with mock.patch.dict(os.environ, seen):
+            r = self.run_cli()
+        self.assertEqual(r.returncode, 0, r.stderr)             # a warning, never an error
+        self.assertIn("warning: sshd is not listening on this machine's Tailscale address (%s)" % TAILNET_IP, r.stderr)
+        self.assertIn("9 routes ok, 1 warning", r.stdout)
+        with mock.patch.dict(os.environ, dict(seen, HERMES_FAKE_SS=self.ss("LISTEN 0 128 %s:2022 0.0.0.0:*" % TAILNET_IP))):
+            r = self.run_cli()
+        self.assertEqual((r.returncode, r.stderr), (0, ""))
+        self.assertIn("9 routes ok\n", r.stdout)
+        # not on a tailnet, ss cannot run, or neither tool is there: nothing is said, because nothing was seen
+        for env in ({"HERMES_FAKE_SS": self.ss()}, {"HERMES_FAKE_TAILNET_IP": TAILNET_IP},
+                    dict(seen, HERMES_SS=str(self.h.home / "no-ss")), dict(seen, HERMES_TAILSCALE=str(self.h.home / "no-tailscale"))):
+            with self.subTest(env=sorted(env)), mock.patch.dict(os.environ, env):
+                r = self.run_cli()
+                self.assertEqual((r.returncode, r.stderr), (0, ""))
+
+    def test_the_commands_that_carry_never_ask_about_sshd(self):
+        """Only check-config looks: load() is what receive and the door call for every file, and must stay quick."""
+        self.h.write()
+        with mock.patch.dict(os.environ, {"HERMES_FAKE_TAILNET_IP": TAILNET_IP, "HERMES_FAKE_SS": self.ss()}):
+            self.assertEqual(config.load().warnings, [])
 
 
 if __name__ == "__main__":

@@ -88,7 +88,7 @@ Janus's design decides the format. Hermes needs it to answer "is this sender all
 { "routes": { "lesson": { "from": [{ "key": "{{PC}}", "node": "{{PC}}" }, { "fetch": "decks" }],
                           "kinds": ["mentor-lesson"], "max_bytes": 524288 } } }
 ```
-`hermes check-config` warns about any Hermes route that Janus's file doesn't mention, because every arrival on it would be quarantined.
+`hermes check-config` warns about any Hermes route that Janus's file doesn't mention, because every arrival on it would be quarantined. It also warns when `sshd` is not listening on {{SERVER}}'s Tailscale address, because no device could then reach the door (§3 step 1).
 
 ## 3. The door (how a delivery flows)
 ```
@@ -101,7 +101,7 @@ sender ─ssh, Hermes key─▶ hermes receive ─▶ <stage>/incoming/<id>/ ─
    duplicate ─▶ <stage>/skipped/<id>/ ─▶ log
    Janus missing / failed / timed out ─▶ <stage>/held/<id>/ ─▶ log + alert (never delivered unchecked)
 ```
-**1. Receive ({{PC}} → {{SERVER}}).** On {{PC}}, `hermes.ps1 send <route> <files>` runs `ssh -T hermes-{{SERVER}} put <route> <name-b64url> <bytes> <sha256>` once per file and streams the file on stdin.
+**1. Receive ({{PC}} → {{SERVER}}).** On {{PC}}, `hermes.ps1 send <route> <files>` runs `ssh -T hermes-{{SERVER}} put <route> <name-b64url> <bytes> <sha256>` once per file and streams the file on stdin. `hermes-{{SERVER}}` is an ssh alias on the device, and the server's address and port live there and nowhere else: `sshd` may listen on any port, on the Tailscale address only, so nothing assumes the default. `hermes.ps1 setup` copies both from the `{{SSH}}` alias (`docs/windows-client.md`).
 - Every argument is a route id, base64url, digits or hex. PowerShell 5 can't mangle them (Windows PowerShell 5 strips inner quotes from native-command arguments).
 - On {{SERVER}}, the key's `authorized_keys` line forces `hermes receive --key {{PC}}`:
   ```

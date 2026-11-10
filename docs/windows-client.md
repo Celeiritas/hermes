@@ -6,17 +6,19 @@ Design §3 step 1 (send) and step 3 (collect). One PowerShell 5 script on {{PC}}
 1. Clone the repo (or copy `clients/windows/`) somewhere that stays, e.g. `{{HOME_PC}}\src\hermes`.
 2. In PowerShell:
    ```
-   powershell -ExecutionPolicy Bypass -File {{HOME_PC}}\src\hermes\clients\windows\hermes.ps1 setup -Server {{SERVER}} -User <your user on {{SERVER}}>
+   powershell -ExecutionPolicy Bypass -File {{HOME_PC}}\src\hermes\clients\windows\hermes.ps1 setup -Server {{SERVER}} -User <your user on {{SERVER}}> -Alias {{SSH}}
    ```
-   This makes `{{HOME_PC}}\.ssh\hermes_{{PC}}` (ed25519, no passphrase, for Hermes only; kept if it exists), adds a `Host hermes-{{SERVER}}` block to `{{HOME_PC}}\.ssh\config` (HostName, User, IdentityFile, `IdentitiesOnly yes`, `StrictHostKeyChecking accept-new`), saves `%APPDATA%\Hermes\config.json` (server, user, port, device, mail folder) and makes `{{HOME_PC}}\Hermes-Mail\`. The device name defaults to the PC's computer name in lower case; `-Device` sets it; it must be the name the server knows the PC by (`tailscale whois` names the node, and Janus compares the two). `-Port` for a server whose OpenSSH door is not on 22 (below); `-Mail` for another collect folder.
-3. It prints **one pasteable line** that installs the public key on the server with `hermes keys add` (it asks for your usual login there):
+   This makes `{{HOME_PC}}\.ssh\hermes_{{PC}}` (ed25519, no passphrase, for Hermes only; kept if it exists), adds a `Host hermes-{{SERVER}}` block to `{{HOME_PC}}\.ssh\config` (HostName, Port when one was named, User, IdentityFile, `IdentitiesOnly yes`, `StrictHostKeyChecking accept-new`), saves `%APPDATA%\Hermes\config.json` (server, user, port, alias, device, mail folder) and makes `{{HOME_PC}}\Hermes-Mail\`. The device name defaults to the PC's computer name in lower case; `-Device` sets it; it must be the name the server knows the PC by (`tailscale whois` names the node, and Janus compares the two). `-Mail` for another collect folder.
+
+   **The address and the port come from your ssh alias.** `sshd` on {{SERVER}} may listen on any port, and on the server's Tailscale address only, so setup never assumes 22. `-Alias {{SSH}}` names the ssh alias you already use for the server: setup copies its `HostName` and its `Port` into `Host hermes-{{SERVER}}` (the user is always `-User`, the key is always the Hermes one). Without `-Alias` it looks for a `Host` block in this order: one called like the server, then one whose `HostName` is the server, and only when there is neither, the one block whose `HostName` is the server plus a dot and a domain (`{{SERVER}}.corp.example`). If two or more blocks match that last way, setup picks none (one of them could be another machine's, with another port and address), lists them, and stops: name the right one with `-Alias`. Whenever a block is chosen, setup prints which one (its name, `HostName` and `Port`) so you can see it. `-Port <n>` wins over the alias. With no alias and no `-Port`, setup asks for the port. **If no port is known** (nobody gave `-Port`, the alias has no `Port` line, and the question gets no number), setup stops with exit code 1 and changes nothing, because writing no `Port` line would make ssh quietly use 22. If ssh's own default really is right, say so on purpose with `-Port 0` (or answer `0`): then there is no `Port` line. Setup reads plain `Host` blocks only: a port that reaches your alias through a pattern (`Host *.example`), a `Match` or an `Include` is not seen, so give `-Port` then. A `Host hermes-{{SERVER}}` block that is already there is never changed: setup says what it holds, and says so when the alias or `-Port` names another port.
+3. It prints **one pasteable line** that installs the public key on the server with `hermes keys add`, through your own alias when there is one (otherwise `ssh -p <port> <user>@{{SERVER}}`, without `-p` when no port was named); it asks for your usual login there:
    ```
-   Get-Content "{{HOME_PC}}\.ssh\hermes_{{PC}}.pub" | ssh <user>@{{SERVER}} 'hermes keys add {{PC}}'
+   Get-Content "{{HOME_PC}}\.ssh\hermes_{{PC}}.pub" | ssh {{SSH}} 'hermes keys add {{PC}}'
    ```
 4. `hermes.ps1 ping` → `{{SERVER}} answers: hermes <version> is at the door.`
 5. `install-sendto.ps1` makes the Send To entries (and `-Desktop` puts Magnet and Collect on the Desktop). `-Remove` sets them aside, dated, never deleting.
 
-**The server side must be OpenSSH.** The door is an `authorized_keys` forced command, which only OpenSSH's `sshd` reads. A server that runs *Tailscale SSH* on port 22 answers ssh itself, ignores `authorized_keys`, and would run `ping` as a shell command; on such a server `sshd` has to listen on another port (then `setup -Port <n>`), or the client must point at a port where OpenSSH answers. `hermes.ps1 ping` says so when the answer is not `hermes ok <version>`.
+**The server side must be OpenSSH.** The door is an `authorized_keys` forced command, which only OpenSSH's `sshd` reads. A server that runs *Tailscale SSH* on port 22 answers ssh itself, ignores `authorized_keys`, and would run `ping` as a shell command; on such a server `sshd` has to listen on another port, and that port belongs in your `{{SSH}}` alias, where setup finds it (or `setup -Port <n>`). `hermes.ps1 ping` says so when the answer is not `hermes ok <version>`. On the server, `hermes check-config` warns when `sshd` is not listening on the server's Tailscale address at all, because no device could then reach the door.
 
 ## Commands
 | Command | What it does |
@@ -28,7 +30,7 @@ Design §3 step 1 (send) and step 3 (collect). One PowerShell 5 script on {{PC}}
 | `hermes.ps1 ping` | does the server answer the Hermes key? |
 | `hermes.ps1 setup …` | as above; safe to run again (key and alias are kept) |
 
-`-Window` is what the Send To entries pass: the script runs in its own window, pauses 3 s after success and waits for Enter after a failure, so a message is never lost. `-Server`, `-Port`, `-User`, `-Device`, `-Mail` override the setup for one run. `-Type 1-6` and `-Pick all|1,3` answer the torrent and magnet questions ahead of time (for scripts and tests). Exit code 0 only when everything went through.
+`-Window` is what the Send To entries pass: the script runs in its own window, pauses 3 s after success and waits for Enter after a failure, so a message is never lost. `-Server`, `-Device`, `-Mail` override the setup for one run. `-Alias`, `-Port` and `-User` matter to `setup` only: every send goes through `Host hermes-{{SERVER}}`, and ssh reads the address, the port and the user there. `-Type 1-6` and `-Pick all|1,3` answer the torrent and magnet questions ahead of time (for scripts and tests). Exit code 0 only when everything went through.
 
 Send To entries (`install-sendto.ps1`): **Hermes · Mail** (`servermail`), **Hermes · Torrent** (asks the type), **Hermes · Magnet** (clipboard or files), **Hermes · Lesson** (`lesson`), **Hermes · ROMs** (`roms`).
 
@@ -50,7 +52,7 @@ The server streams the file into `<stage>/incoming/<id>/data`, checks size and S
 | 3 | the server's own problem | `tell the owner`, with the reason |
 
 ## Manual test checklist
-CI can't run PowerShell against a real server, so these are done by hand on {{PC}} against {{SERVER}}; the protocol itself is tested on Linux with the same arguments (`tests/test_windows_client.py`). Write the date and the Hermes version next to a run.
+CI can't run PowerShell against a real server, so these are done by hand on {{PC}} against {{SERVER}}; the protocol itself is tested on Linux with the same arguments, and `setup` is run for real in a temporary home folder (`tests/test_windows_client.py`). Write the date and the Hermes version next to a run.
 
 | # | Test | How | Expect |
 |---|---|---|---|
@@ -67,5 +69,6 @@ CI can't run PowerShell against a real server, so these are done by hand on {{PC
 | 11 | Magnet | copy a magnet link, run Hermes · Magnet (or `hermes.ps1 magnet -Pick all -Type 2`) | name + hash listed; `<hash8>.magnet` at the door on `torrent-shows` |
 | 12 | collect | on the server `tailscale file cp f.txt {{PC}}:` as `hermes__f.txt`; `hermes.ps1 collect` | `f.txt` in `{{HOME_PC}}\Hermes-Mail\`, the folder opens, `1 file(s) arrived` |
 | 13 | key does nothing else | the table in `docs/keys.md` | each refused |
+| 14 | the port comes from the alias | on a PC whose `{{SSH}}` alias names the port of the server's OpenSSH: set the old `Host hermes-{{SERVER}}` block aside, `hermes.ps1 setup -Server {{SERVER}} -User <user> -Alias {{SSH}}`, `hermes.ps1 ping`, then item 9 | the new block has the alias's `HostName` and `Port`; `ping` answers; the Send To file is at the door |
 
-Last run: 2026-10-20, hermes 0.2.1, {{PC}} → {{SERVER}} over Tailscale, against a user-level OpenSSH `sshd` on a test port bound to the server's Tailscale address (the server's port 22 is Tailscale SSH) with a test `routes.json`. Items 1–13 all as expected; the 2 GiB file took 945 s through a Tailscale relay and arrived with the same SHA-256.
+Last run: 2026-10-20, hermes 0.2.1, {{PC}} → {{SERVER}} over Tailscale, against a user-level OpenSSH `sshd` on a test port bound to the server's Tailscale address (the server's port 22 is Tailscale SSH) with a test `routes.json`. Items 1–13 all as expected; the 2 GiB file took 945 s through a Tailscale relay and arrived with the same SHA-256. Item 14 came with 0.4.2 and has not been run by hand yet.

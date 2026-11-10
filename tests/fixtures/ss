@@ -1,0 +1,11 @@
+#!/usr/bin/env python3
+"""A fake ss for tests ($HERMES_SS points Hermes at it): prints $HERMES_FAKE_SS, which holds what `ss -tlnp` would show,
+and exits 0. Without $HERMES_FAKE_SS it exits 1, like a machine where ss cannot run."""
+import os
+import sys
+
+text = os.environ.get("HERMES_FAKE_SS")
+if text is None:
+    print("fake ss: nothing to show", file=sys.stderr)
+    sys.exit(1)
+sys.stdout.write(text)
