@@ -321,16 +321,71 @@ class SetupTest(unittest.TestCase):
                 self.assertEqual((b.get("HostName"), b.get("Port")), want[:2])
                 self.assertIn("ssh %s 'hermes keys add testpc'" % want[2], r.stdout)
 
+    OTHER = "Host other\n    HostName other.example\n    Port 2200\n"
+
     def test_setup_never_assumes_22(self):
-        """No alias to copy from, no -Port and nobody to ask: no Port line at all, so ssh uses its own default."""
-        r, text = self.run_setup(config="Host other\n    HostName other.example\n    Port 2200\n")
+        """No alias to copy from, no -Port and nobody to ask: setup stops with a plain message and changes nothing."""
+        r, text = self.run_setup(config=self.OTHER)
+        self.assertEqual(r.returncode, 1, r.stdout + r.stderr)
+        self.assertIn("No port is known", r.stdout)
+        self.assertIn("-Port <n>", r.stdout)
+        self.assertEqual(text, self.OTHER)
+        self.assertFalse((self.appdata / "Hermes" / "config.json").exists())
+
+    def test_an_alias_without_a_port_line_fails_too(self):
+        r, text = self.run_setup(config="Host testserver\n    HostName testserver\n")
+        self.assertEqual(r.returncode, 1, r.stdout + r.stderr)
+        self.assertIn("Host testserver has no Port line", r.stdout)
+        self.assertNotIn("hermes-testserver", text)
+
+    def test_an_explicit_port_0_means_ssh_own_default(self):
+        """-Port 0 on purpose: success, no Port line, and the saved port is 0."""
+        r, text = self.run_setup("-Port", "0", config=self.OTHER)
         self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
         b = self.block(text)
         self.assertEqual(b.get("HostName"), "testserver")
         self.assertNotIn("Port", b)
-        self.assertIn("no Port line", r.stdout)
+        self.assertIn("ssh's own default", r.stdout)
         self.assertIn("ssh tester@testserver 'hermes keys add testpc'", r.stdout)
         self.assertEqual(self.saved()["port"], 0)
+
+    def test_the_answer_0_means_ssh_own_default_but_no_answer_fails(self):
+        r, text = self.run_setup(config=None, answer="0\n")
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        self.assertNotIn("Port", self.block(text))
+        r, text = self.run_setup(config=None, answer="\n")
+        self.assertEqual(r.returncode, 1, r.stdout + r.stderr)
+        self.assertEqual(text, "")
+
+    def test_another_machines_block_is_never_taken(self):
+        """Server `testserver`; `Host work` has HostName testserver.corp.example and Port 2200. Two such blocks: none picked."""
+        two = ("Host work\n    HostName testserver.corp.example\n    Port 2200\n\n"
+               "Host lab\n    HostName testserver.lab.example\n    Port 2201\n")
+        r, text = self.run_setup(config=two)
+        self.assertEqual(r.returncode, 1, r.stdout + r.stderr)
+        self.assertEqual(text, two)
+        self.assertFalse((self.appdata / "Hermes" / "config.json").exists())
+        for want in ("Host work (HostName testserver.corp.example, Port 2200)",
+                     "Host lab (HostName testserver.lab.example, Port 2201)", "-Alias <name>"):
+            self.assertIn(want, r.stdout)
+        r, text = self.run_setup("-Alias", "lab", config=two)                  # naming one settles it
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        self.assertEqual((self.block(text).get("HostName"), self.block(text).get("Port")), ("testserver.lab.example", "2201"))
+
+    def test_one_prefix_match_still_works_and_is_shown(self):
+        r, text = self.run_setup(config="Host work\n    HostName testserver.corp.example\n    Port 2200\n")
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        self.assertIn("using Host work (HostName testserver.corp.example, Port 2200)", r.stdout)
+        self.assertEqual((self.block(text).get("HostName"), self.block(text).get("Port")), ("testserver.corp.example", "2200"))
+
+    def test_an_exact_match_beats_prefix_matches(self):
+        cfg = ("Host work\n    HostName testserver.corp.example\n    Port 2200\n\n"
+               "Host lab\n    HostName testserver.lab.example\n    Port 2201\n\n"
+               "Host mine\n    HostName testserver\n    Port 2022\n")
+        r, text = self.run_setup(config=cfg)
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        self.assertIn("using Host mine (HostName testserver, Port 2022)", r.stdout)
+        self.assertEqual(self.block(text).get("Port"), "2022")
 
     def test_setup_asks_for_the_port_when_there_is_no_alias(self):
         r, text = self.run_setup(config=None, answer="2022\n")
@@ -359,6 +414,9 @@ class SetupTest(unittest.TestCase):
     def test_a_wildcard_block_is_not_the_alias(self):
         """ssh applies `Host *` to hermes-<server> by itself; copying from it would freeze a default into the alias."""
         r, text = self.run_setup(config="Host *\n    Port 2500\n\nHost test*\n    Port 2600\n")
+        self.assertEqual(r.returncode, 1, r.stdout + r.stderr)                 # no port from them: setup stops
+        self.assertNotIn("hermes-testserver", text)
+        r, text = self.run_setup("-Port", "0", config="Host *\n    Port 2500\n\nHost test*\n    Port 2600\n")
         self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
         self.assertNotIn("Port", self.block(text))
 
